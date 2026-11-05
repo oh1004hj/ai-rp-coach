@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SKT 26.4Q AI 영상평가 스마트 프롬프터</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Phosphor Icons -->
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            skt: {
+              red: '#EA002C',
+              redHover: '#C70025',
+              blue: '#0055FE',
+              dark: '#080C15',
+              card: '#131B2B',
+              cardHover: '#1B263B',
+              border: '#23324C'
+            }
+          },
+          fontFamily: {
+            sans: ['Pretendard', '-apple-system', 'BlinkMacSystemFont', 'system-ui', 'Roboto', 'sans-serif'],
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+    body {
+      font-family: 'Pretendard', sans-serif;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    /* Pulse Glow Animation for Voice Activity */
+    @keyframes pulse-ring {
+      0% { transform: scale(0.9); opacity: 0.9; }
+      50% { transform: scale(1.25); opacity: 0.3; }
+      100% { transform: scale(0.9); opacity: 0.9; }
+    }
+    .mic-live-pulse {
+      animation: pulse-ring 1.8s infinite ease-in-out;
+    }
+    /* Smooth transition for script scaling */
+    #scriptText {
+      transition: font-size 0.2s ease, opacity 0.2s ease, transform 0.2s ease;
+    }
+  </style>
+</head>
+<body class="bg-skt-dark text-slate-100 min-h-screen flex flex-col justify-between overflow-x-hidden antialiased">
+
+  <!-- =========================================================================================
+       1. TOP NAVIGATION & HEADER
+       ========================================================================================= -->
+  <header class="border-b border-skt-border/70 bg-skt-dark/95 backdrop-blur-md sticky top-0 z-40 px-4 py-3">
+    <div class="max-w-6xl mx-auto flex items-center justify-between gap-3">
+      
+      <!-- Logo & Meta Info -->
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-skt-red to-rose-500 flex items-center justify-center font-black text-white text-base shadow-lg shadow-skt-red/25">
+          T
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="font-bold text-sm sm:text-base tracking-tight text-white flex items-center gap-1.5">
+              <span>26.4Q AI 영상평가 스마트 프롬프터</span>
+            </h1>
+            <span class="hidden sm:inline-block text-[11px] px-2 py-0.5 rounded-full bg-skt-red/20 text-skt-red border border-skt-red/30 font-semibold">
+              원테이크 실전모드
+            </span>
+          </div>
+          <div id="headerMetaText" class="text-xs text-slate-400 truncate max-w-[220px] sm:max-w-md font-medium">
+            설정 정보를 입력해 주세요
+          </div>
+        </div>
+      </div>
+
+      <!-- Controls (Font, Fullscreen, Auto-advance, Settings) -->
+      <div id="headerControls" class="flex items-center gap-1.5 sm:gap-2">
+        <!-- Font Scale -->
+        <div class="flex items-center bg-skt-card border border-skt-border rounded-xl p-1">
+          <button id="btnFontDec" class="w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center text-xs sm:text-sm font-bold text-slate-300 hover:text-white hover:bg-slate-700/60 rounded-lg transition" title="글자 축소 (단축키: -)">
+            A-
+          </button>
+          <span id="fontScaleDisplay" class="text-[11px] text-slate-400 px-1.5 font-mono font-medium">100%</span>
+          <button id="btnFontInc" class="w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center text-xs sm:text-sm font-bold text-slate-300 hover:text-white hover:bg-slate-700/60 rounded-lg transition" title="글자 확대 (단축키: +)">
+            A+
+          </button>
+        </div>
+
+        <!-- Auto Speech Recognition Next Mode Toggle -->
+        <button id="btnToggleAuto" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition bg-emerald-500/20 text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/30">
+          <i class="ph-bold ph-magic-wand text-sm"></i>
+          <span class="hidden md:inline">자동 넘김</span>
+          <span id="autoStatusLabel" class="text-[10px] px-1 rounded bg-emerald-500/30">ON</span>
+        </button>
+
+        <!-- Fullscreen Button -->
+        <button id="btnFullscreen" class="w-9 h-9 flex items-center justify-center text-slate-300 hover:text-white bg-skt-card border border-skt-border rounded-xl transition hover:bg-skt-cardHover" title="전체화면">
+          <i id="fsIcon" class="ph-bold ph-arrows-out text-base"></i>
+        </button>
+
+        <!-- Eye-contact Tip Modal Button -->
+        <button id="btnOpenTipModal" class="w-9 h-9 flex items-center justify-center text-amber-400 bg-skt-card border border-skt-border rounded-xl transition hover:bg-skt-cardHover" title="시선처리 감점방지 팁">
+          <i class="ph-bold ph-eye text-base"></i>
+        </button>
+
+        <!-- Reset Settings Button -->
+        <button id="btnOpenSetup" class="w-9 h-9 flex items-center justify-center text-slate-300 hover:text-white bg-skt-card border border-skt-border rounded-xl transition hover:bg-skt-cardHover" title="기본 정보 수정">
+          <i class="ph-bold ph-gear text-base"></i>
+        </button>
+      </div>
+
+    </div>
+  </header>
+
+  <!-- =========================================================================================
+       2. MAIN TELEPROMPTER VIEWPORT
+       ========================================================================================= -->
+  <main class="max-w-5xl mx-auto w-full flex-1 px-4 py-4 flex flex-col justify-between">
+
+    <!-- Progress Indicator Strip -->
+    <div class="w-full flex items-center justify-between gap-2 bg-skt-card/90 border border-skt-border p-2.5 sm:p-3 rounded-2xl mb-4 backdrop-blur shadow-sm">
+      <div id="stepBadgesContainer" class="flex items-center gap-1.5 overflow-x-auto py-0.5 no-scrollbar">
+        <!-- Rendered by JS -->
+      </div>
+      <div id="stepPointsBadge" class="flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold whitespace-nowrap border">
+        <!-- Point Tag -->
+      </div>
+    </div>
+
+    <!-- Script Display Card (Eye-contact Optimized Center View) -->
+    <div id="teleprompterCard" class="relative w-full flex-1 min-h-[380px] sm:min-h-[460px] bg-skt-card border-2 border-skt-border rounded-3xl p-6 sm:p-10 flex flex-col justify-between shadow-2xl transition-all duration-300">
+      
+      <!-- Top Stage Guide & Warning -->
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-skt-border/60 pb-3 mb-3">
+        <div class="flex items-center gap-2 text-xs sm:text-sm font-semibold text-slate-300" id="stepGuideText">
+          <!-- Guide Text -->
+        </div>
+        <div id="dangerNoticeBox" class="hidden items-center gap-1 text-xs px-2.5 py-1 rounded-lg bg-rose-500/15 border border-rose-500/40 text-rose-300 font-semibold">
+          <i class="ph-bold ph-warning-octagon text-rose-400 text-sm"></i>
+          <span id="dangerNoticeText">감점 주의</span>
+        </div>
+      </div>
+
+      <!-- SCRIPT TEXT (LARGE, HIGH VISIBILITY FOR WEBCAM/MOBILE) -->
+      <div class="my-auto py-3 overflow-y-auto max-h-[50vh] flex items-center justify-center text-center">
+        <p id="scriptText" class="font-extrabold leading-relaxed sm:leading-snug text-white tracking-tight drop-shadow-sm px-2">
+          <!-- Script populated here -->
+        </p>
+      </div>
+
+      <!-- Live Keyword Trigger Checklist -->
+      <div class="border-t border-skt-border/60 pt-3.5 mt-3">
+        <div class="flex items-center justify-between text-xs text-slate-400 mb-2">
+          <span class="font-semibold flex items-center gap-1.5">
+            <i class="ph-bold ph-target text-emerald-400 text-sm"></i>
+            음성 인식 트리거 키워드:
+          </span>
+          <span id="keywordCountText" class="font-mono text-emerald-400 font-bold">0 / 0 달성</span>
+        </div>
+        <div id="keywordChipsContainer" class="flex flex-wrap gap-2">
+          <!-- Keywords rendered here -->
+        </div>
+      </div>
+      
+    </div>
+
+    <!-- Bottom Audio & Navigation Bar -->
+    <div class="w-full mt-4 bg-skt-dark/95 border border-skt-border p-3 sm:p-4 rounded-2xl flex items-center justify-between gap-3 shadow-xl">
+      
+      <!-- Microphone Status & Button -->
+      <div class="flex items-center gap-3 min-w-0">
+        <div class="relative flex items-center justify-center flex-shrink-0">
+          <div id="micRingEffect" class="absolute w-10 h-10 rounded-full bg-emerald-500/30 mic-live-pulse hidden"></div>
+          <button id="btnToggleMic" class="relative z-10 w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-400 hover:text-white transition" title="마이크 켜기/끄기 (단축키: M)">
+            <i id="micIcon" class="ph-bold ph-microphone-slash text-lg"></i>
+          </button>
+        </div>
+
+        <div class="min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="text-[10px] font-bold font-mono tracking-wider px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 uppercase">STT</span>
+            <span id="speechStateMsg" class="text-xs text-slate-400 truncate">마이크가 꺼져 있습니다. 마이크를 켜주세요.</span>
+          </div>
+          <p id="speechInterimTranscript" class="text-xs sm:text-sm text-slate-200 font-medium truncate mt-0.5 max-w-xs sm:max-w-md lg:max-w-xl">
+            준비가 되면 마이크를 켜고 편안하게 대본을 읽어주세요.
+          </p>
+        </div>
+      </div>
+
+      <!-- Navigation Step Buttons -->
+      <div class="flex items-center gap-2 flex-shrink-0">
+        <button id="btnPrev" class="px-3 py-2 sm:px-4 sm:py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs sm:text-sm flex items-center gap-1.5 transition">
+          <i class="ph-bold ph-arrow-left"></i>
+          <span class="hidden sm:inline">이전</span>
+        </button>
+        <button id="btnNext" class="px-3.5 py-2 sm:px-5 sm:py-2.5 rounded-xl bg-skt-red hover:bg-skt-redHover text-white font-bold text-xs sm:text-sm flex items-center gap-1.5 transition shadow-lg shadow-skt-red/25">
+          <span class="hidden sm:inline">다음</span>
+          <i class="ph-bold ph-arrow-right"></i>
+        </button>
+      </div>
+
+    </div>
+
+    <!-- Keyboard Shortcut Help Hint -->
+    <div class="text-center mt-2.5 text-[11px] text-slate-500 hidden sm:block">
+      단축키: <kbd class="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-700 text-slate-300">Space</kbd> / <kbd class="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-700 text-slate-300">→</kbd> 다음 단계 | <kbd class="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-700 text-slate-300">←</kbd> 이전 | <kbd class="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-700 text-slate-300">M</kbd> 마이크 On/Off | <kbd class="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-700 text-slate-300">F</kbd> 전체화면
+    </div>
+
+  </main>
+
+  <!-- =========================================================================================
+       3. MODAL: SETUP INFO MODAL
+       ========================================================================================= -->
+  <div id="setupModal" class="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4">
+    <div class="bg-skt-card border border-skt-border max-w-lg w-full rounded-3xl p-6 sm:p-8 shadow-2xl relative overflow-hidden">
+      <!-- Glow Accent -->
+      <div class="absolute -top-16 -right-16 w-48 h-48 bg-skt-red/20 rounded-full blur-3xl pointer-events-none"></div>
+
+      <div class="mb-5">
+        <div class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-skt-red/15 border border-skt-red/30 text-skt-red text-xs font-bold mb-2">
+          <i class="ph-bold ph-video-camera"></i> 26.4Q 방문평가 AI R/P
+        </div>
+        <h2 class="text-xl sm:text-2xl font-black text-white">촬영 기본정보 설정</h2>
+        <p class="text-xs text-slate-400 mt-1 leading-relaxed">
+          체크리스트의 <strong class="text-slate-200">"시작 시 본인확인 필수 멘트"</strong>에 자동 반영됩니다.
+        </p>
+      </div>
+
+      <form id="setupForm" class="space-y-3.5">
+        <div>
+          <label class="block text-xs font-semibold text-slate-300 mb-1">촬영일자</label>
+          <input type="date" id="inputDate" required
+            class="w-full bg-skt-dark border border-skt-border focus:border-skt-red focus:ring-1 focus:ring-skt-red text-white text-sm rounded-xl px-3.5 py-2.5 outline-none transition font-sans">
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 mb-1">매장코드</label>
+            <input type="text" id="inputStoreCode" placeholder="예: D198200" required
+              class="w-full bg-skt-dark border border-skt-border focus:border-skt-red focus:ring-1 focus:ring-skt-red text-white text-sm rounded-xl px-3.5 py-2.5 outline-none transition">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 mb-1">매장명</label>
+            <input type="text" id="inputStoreName" placeholder="예: 부평직영점" required
+              class="w-full bg-skt-dark border border-skt-border focus:border-skt-red focus:ring-1 focus:ring-skt-red text-white text-sm rounded-xl px-3.5 py-2.5 outline-none transition">
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-300 mb-1">T크루 성함 (응대 직원)</label>
+          <input type="text" id="inputCrewName" placeholder="예: 홍길동 매니저" required
+            class="w-full bg-skt-dark border border-skt-border focus:border-skt-red focus:ring-1 focus:ring-skt-red text-white text-sm rounded-xl px-3.5 py-2.5 outline-none transition">
+        </div>
+
+        <div class="p-3 rounded-xl bg-slate-900/80 border border-slate-700/60 text-xs text-slate-300 space-y-1">
+          <div class="font-bold text-amber-400 flex items-center gap-1.5">
+            <i class="ph-bold ph-shield-warning text-sm"></i> AI 원테이크 촬영 필수 수칙
+          </div>
+          <p class="text-[11px] text-slate-400 leading-relaxed">
+            무편집 단일 롱테이크 영상(최대 500MB 이내). 카메라 렌즈(고객의 눈)를 정면으로 응시해야 하며 모니터나 스마트폰을 계속 응시하여 스크립트 낭독으로 판정되면 감점됩니다.
+          </p>
+        </div>
+
+        <div class="pt-2 flex gap-2">
+          <button type="submit" class="flex-1 py-3 px-4 bg-gradient-to-r from-skt-red to-rose-600 hover:brightness-110 text-white font-bold rounded-xl shadow-lg shadow-skt-red/30 transition flex items-center justify-center gap-2 text-sm">
+            <i class="ph-bold ph-play-circle text-lg"></i>
+            <span>연습 / 촬영 시작하기</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- =========================================================================================
+       4. MODAL: EYE-CONTACT & POSITIONING TIP
+       ========================================================================================= -->
+  <div id="tipModal" class="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-skt-card border border-skt-border max-w-md w-full rounded-3xl p-6 shadow-2xl relative">
+      <div class="flex items-center justify-between border-b border-skt-border/60 pb-3 mb-4">
+        <h3 class="font-bold text-base text-white flex items-center gap-2">
+          <i class="ph-bold ph-eye text-amber-400 text-lg"></i>
+          시선 처리 & 낭독 감점 방지 팁
+        </h3>
+        <button id="btnCloseTipModal" class="text-slate-400 hover:text-white text-lg">
+          <i class="ph-bold ph-x"></i>
+        </button>
+      </div>
+      
+      <div class="text-xs sm:text-sm text-slate-300 space-y-3 leading-relaxed">
+        <div class="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs">
+          <strong>⚠️ 주의사항 (평가 지침):</strong><br>
+          스마트폰 화면을 지속적으로 주시하며 낭독하는 모습이 보이면 평가 AI 및 담당 검수자가 감점 처리합니다.
+        </div>
+        <ul class="list-disc list-inside space-y-1.5 text-xs text-slate-400">
+          <li><strong>프롬프터 거치 위치:</strong> 스마트폰을 촬영 중인 카메라 렌즈 바로 옆이나 바로 위 뒤편에 배치하세요.</li>
+          <li><strong>키워드 중심 힐끗 보기:</strong> 문장을 토씨 하나 안 틀리고 읽기보다는, 하단 <span class="text-emerald-400">초록색 필수 키워드</span>만 확인 후 카메라 렌즈를 정면으로 보며 자연스럽게 말씀하세요.</li>
+          <li><strong>자세:</strong> 양손이 화면 아래로 숨겨지지 않도록 상담 테이블 위에 자연스럽게 올려놓고 제스처를 취하세요.</li>
+        </ul>
+      </div>
+
+      <button id="btnConfirmTipModal" class="mt-5 w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs transition">
+        확인했습니다
+      </button>
+    </div>
+  </div>
+
+  <!-- =========================================================================================
+       5. MODAL: COMPLETION SCREEN
+       ========================================================================================= -->
+  <div id="finishModal" class="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-skt-card border border-emerald-500/40 max-w-md w-full rounded-3xl p-6 sm:p-8 text-center shadow-2xl relative">
+      <div class="w-14 h-14 mx-auto rounded-2xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-3xl mb-4 border border-emerald-500/50">
+        <i class="ph-bold ph-check"></i>
+      </div>
+      <h3 class="text-xl font-black text-white">모든 R/P 단계 완료!</h3>
+      <p class="text-xs sm:text-sm text-slate-300 mt-2 leading-relaxed">
+        26.4Q 방문평가 체크리스트의 <strong class="text-emerald-400">본인확인부터 배웅인사까지</strong> 모든 키워드를 완주했습니다.
+      </p>
+
+      <div class="my-5 p-3.5 rounded-2xl bg-slate-900/80 border border-slate-700/60 text-left text-xs space-y-1.5 text-slate-300">
+        <div class="font-bold text-amber-300 flex items-center gap-1.5">
+          <i class="ph-bold ph-cloud-arrow-up"></i> T Campus 업로드 전 최종 확인
+        </div>
+        <p>1. 영상 파일 용량이 <strong class="text-white">500MB 이내</strong>인가요?</p>
+        <p>2. 촬영일, 매장코드, 매장명, 크루명이 시작 시 선명하게 녹음되었나요?</p>
+      </div>
+
+      <div class="flex gap-2">
+        <button id="btnRestartAll" class="flex-1 py-2.5 rounded-xl bg-skt-red hover:bg-skt-redHover text-white font-bold text-xs transition">
+          처음부터 다시 연습
+        </button>
+        <button id="btnCloseFinish" class="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition">
+          닫기
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <footer class="text-center py-2 text-[11px] text-slate-600 border-t border-skt-border/40">
+    SK Telecom 26.4Q AI 영상평가 스마트 프롬프터 • Web Speech API 기반 로컬 구동 (무료 무제한)
+  </footer>
+
+  <!-- =========================================================================================
+       6. CORE JAVASCRIPT & MODULAR CHECKLIST SCRIPT DATA
+       (※ 추후 스크립트나 정책 키워드가 변경되면 아래 CHECKLIST_DATA 객체만 수정하여 GitHub에 커밋하면 됩니다)
+       ========================================================================================= -->
+  <script>
+    /**
+     * =====================================================================
+     * [GITHUB 편집 가이드]
+     * 대본 문구, 배점, 통과 필수 키워드를 수정하려면 아래 CHECKLIST_DATA 배열의
+     * scriptFn, requiredKeywords, dangerText 등을 수정해 주시면 됩니다.
+     * =====================================================================
+     */
+    const CHECKLIST_DATA = [
+      {
+        id: 0,
+        badgeName: "0. 본인확인",
+        scoreLabel: "시작 필수사항",
+        scoreBadgeStyle: "border-slate-500/40 bg-slate-700/40 text-slate-300",
+        guide: "카메라 렌즈를 정면으로 바라보며 4가지 필수 정보(촬영일/매장코드/매장명/T크루)를 또박또박 발화하세요.",
+        dangerText: null,
+        // Script generator based on user input
+        scriptFn: (store, code, crew, date) =>
+          `촬영일 ${date}, 매장코드 ${code}, 매장명 ${store}, T크루 ${crew} 롤플레잉 평가 시작하겠습니다.`,
+        requiredKeywords: ["촬영일", "매장코드", "롤플레잉", "시작하겠습니다"],
+        minMatchesToAdvance: 2
+      },
+      {
+        id: 1,
+        badgeName: "1. 맞이인사",
+        scoreLabel: "배점: 15점 (맞이5+대기5+업무5)",
+        scoreBadgeStyle: "border-blue-500/40 bg-blue-500/20 text-blue-300",
+        guide: "기립하여 눈을 맞추며 매장명을 밝히고 고객의 방문 목적을 질문합니다.",
+        dangerText: "눈맞춤·기립·매장명 누락 시 0점 처리",
+        scriptFn: (store) =>
+          `반갑습니다. ${store}입니다. 고객님, 오늘 어떤 업무 도와드릴까요?`,
+        requiredKeywords: ["반갑습니다", store => store, "어떤 업무", "도와드릴까요"],
+        minMatchesToAdvance: 2
+      },
+      {
+        id: 2,
+        badgeName: "2. 무선 요금제",
+        scoreLabel: "배점: 30점 (베스트 Max/Pro)",
+        scoreBadgeStyle: "border-purple-500/40 bg-purple-500/20 text-purple-300",
+        guide: "고객 사용 패턴을 질문하고 4대 핵심 특장점(무제한, VIP, 전용혜택 1종, 스마트기기 2회선)을 모두 설명합니다.",
+        dangerText: "특장점 4가지 모두 설명해야 30점 만점 부여",
+        scriptFn: () =>
+          `고객님께 가장 적합한 베스트 Max 요금제로 안내해 드리겠습니다. 데이터는 완전 무제한이며, VIP 멤버십 매칭, 구글 AI 또는 OTT 전용혜택 1종, 그리고 스마트기기 2회선 무료 혜택까지 모두 포함되어 있습니다. 평소 자주 쓰시는 혜택이 있으실까요?`,
+        requiredKeywords: ["베스트", "무제한", "혜택", "스마트기기", "멤버십"],
+        minMatchesToAdvance: 3
+      },
+      {
+        id: 3,
+        badgeName: "3. 요금제 재설계",
+        scoreLabel: "배점: 5점 (-5점 감점 방지)",
+        scoreBadgeStyle: "border-amber-500/40 bg-amber-500/20 text-amber-300",
+        guide: "6개월 후 매장 연락/방문을 통한 '재설계'를 안내합니다. (대신 변경 약속 금지)",
+        dangerText: "[감점 주의 -5점] '매장에서 대신 변경 / 자동 변경' 언급 절대 금지!",
+        scriptFn: () =>
+          `추천해 드린 요금제로 6개월간 이용해 보시고, 저희 매장으로 연락 주시거나 방문해 주시면 실제 사용 데이터 패턴에 맞춰 다시 맞춤 재설계해 드리겠습니다.`,
+        requiredKeywords: ["6개월", "재설계", "방문", "연락", "패턴"],
+        minMatchesToAdvance: 2
+      },
+      {
+        id: 4,
+        badgeName: "4. 추가할인 & 유선",
+        scoreLabel: "배점: 10점 (추가할인5+유선5)",
+        scoreBadgeStyle: "border-cyan-500/40 bg-cyan-500/20 text-cyan-300",
+        guide: "제휴카드/T안심보상 및 요즘가족결합(인터넷/Btv 특장점 2가지) 혜택을 제시합니다.",
+        dangerText: "결합 특장점 2가지 이상 설명해야 만점",
+        scriptFn: () =>
+          `추가로 제휴카드 이용 시 매월 기기값 할인이 가능하며, 기존 폰은 T안심보상으로 추가 보상받으실 수 있습니다. 인터넷과 Btv를 결합하시면 요즘가족결합으로 통신비와 인터넷 요금을 동시에 할인받으실 수 있습니다.`,
+        requiredKeywords: ["제휴카드", "안심보상", "결합", "Btv", "인터넷", "할인"],
+        minMatchesToAdvance: 3
+      },
+      {
+        id: 5,
+        badgeName: "5. 배웅 & 정리",
+        scoreLabel: "배점: 10점 (정리5+배웅5)",
+        scoreBadgeStyle: "border-emerald-500/40 bg-emerald-500/20 text-emerald-300",
+        guide: "상담내용 요약 문자(MMS) 전송 안내, 추가 질문 여부, 재방문 권유를 실행합니다.",
+        dangerText: "'가세요', '네' 등 단답형 배웅 절대 금지",
+        scriptFn: () =>
+          `오늘 상담해 드린 요금제와 결합 혜택 내용은 문자로 정리해서 바로 발송해 드리겠습니다. 혹시 더 궁금하신 점 있으실까요? 소중한 시간 내어 방문해 주셔서 감사드리며, 좋은 하루 되시고 언제든 편하게 다시 방문해 주세요!`,
+        requiredKeywords: ["문자", "궁금", "방문", "좋은 하루", "감사"],
+        minMatchesToAdvance: 3
+      }
+    ];
+
+    /**
+     * =====================================================================
+     * APPLICATION STATE CONTROLLER
+     * =====================================================================
+     */
+    const appState = {
+      storeCode: 'D198200',
+      storeName: '부평직영점',
+      crewName: '홍길동 매니저',
+      shootDate: new Date().toISOString().split('T')[0],
+      currentStep: 0,
+      fontScale: 1.0,
+      isAutoAdvance: true,
+      isMicActive: false,
+      recognizedKeywordSet: new Set()
+    };
+
+    // DOM Elements
+    const setupModal = document.getElementById('setupModal');
+    const tipModal = document.getElementById('tipModal');
+    const finishModal = document.getElementById('finishModal');
+    const setupForm = document.getElementById('setupForm');
+
+    const inputDate = document.getElementById('inputDate');
+    const inputStoreCode = document.getElementById('inputStoreCode');
+    const inputStoreName = document.getElementById('inputStoreName');
+    const inputCrewName = document.getElementById('inputCrewName');
+
+    const headerMetaText = document.getElementById('headerMetaText');
+    const stepBadgesContainer = document.getElementById('stepBadgesContainer');
+    const stepPointsBadge = document.getElementById('stepPointsBadge');
+    const stepGuideText = document.getElementById('stepGuideText');
+    const dangerNoticeBox = document.getElementById('dangerNoticeBox');
+    const dangerNoticeText = document.getElementById('dangerNoticeText');
+
+    const teleprompterCard = document.getElementById('teleprompterCard');
+    const scriptText = document.getElementById('scriptText');
+    const keywordChipsContainer = document.getElementById('keywordChipsContainer');
+    const keywordCountText = document.getElementById('keywordCountText');
+
+    const btnFontInc = document.getElementById('btnFontInc');
+    const btnFontDec = document.getElementById('btnFontDec');
+    const fontScaleDisplay = document.getElementById('fontScaleDisplay');
+    const btnToggleAuto = document.getElementById('btnToggleAuto');
+    const autoStatusLabel = document.getElementById('autoStatusLabel');
+    const btnFullscreen = document.getElementById('btnFullscreen');
+    const fsIcon = document.getElementById('fsIcon');
+
+    const btnToggleMic = document.getElementById('btnToggleMic');
+    const micIcon = document.getElementById('micIcon');
+    const micRingEffect = document.getElementById('micRingEffect');
+    const speechStateMsg = document.getElementById('speechStateMsg');
+    const speechInterimTranscript = document.getElementById('speechInterimTranscript');
+
+    const btnPrev = document.getElementById('btnPrev');
+    const btnNext = document.getElementById('btnNext');
+    const btnOpenSetup = document.getElementById('btnOpenSetup');
+    const btnOpenTipModal = document.getElementById('btnOpenTipModal');
+    const btnCloseTipModal = document.getElementById('btnCloseTipModal');
+    const btnConfirmTipModal = document.getElementById('btnConfirmTipModal');
+    const btnRestartAll = document.getElementById('btnRestartAll');
+    const btnCloseFinish = document.getElementById('btnCloseFinish');
+
+    /**
+     * =====================================================================
+     * AUDIO TONE GENERATOR (Subtle UX notification sound)
+     * =====================================================================
+     */
+    function triggerAudioFeedback(frequency = 700, duration = 0.1) {
+      try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.frequency.value = frequency;
+        osc.type = 'sine';
+        gain.gain.setValueAtTime(0.06, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + duration);
+      } catch (e) {
+        // AudioContext blocked before interaction
+      }
+    }
+
+    /**
+     * =====================================================================
+     * INITIAL SETUP & PERSISTENCE
+     * =====================================================================
+     */
+    window.addEventListener('DOMContentLoaded', () => {
+      // Default date
+      inputDate.value = appState.shootDate;
+
+      // Restore from localStorage
+      if (localStorage.getItem('skt_rp_storeCode')) inputStoreCode.value = localStorage.getItem('skt_rp_storeCode');
+      if (localStorage.getItem('skt_rp_storeName')) inputStoreName.value = localStorage.getItem('skt_rp_storeName');
+      if (localStorage.getItem('skt_rp_crewName')) inputCrewName.value = localStorage.getItem('skt_rp_crewName');
+      if (localStorage.getItem('skt_rp_shootDate')) inputDate.value = localStorage.getItem('skt_rp_shootDate');
+    });
+
+    setupForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      appState.shootDate = inputDate.value;
+      appState.storeCode = inputStoreCode.value.trim();
+      appState.storeName = inputStoreName.value.trim();
+      appState.crewName = inputCrewName.value.trim();
+
+      // Save
+      localStorage.setItem('skt_rp_shootDate', appState.shootDate);
+      localStorage.setItem('skt_rp_storeCode', appState.storeCode);
+      localStorage.setItem('skt_rp_storeName', appState.storeName);
+      localStorage.setItem('skt_rp_crewName', appState.crewName);
+
+      // Hide modal & start
+      setupModal.classList.add('hidden');
+      headerMetaText.textContent = `${appState.storeName} (${appState.storeCode}) | ${appState.crewName} 매니저`;
+
+      appState.currentStep = 0;
+      loadStep(0);
+      initSpeechRecognition();
+      startVoiceListening();
+    });
+
+    /**
+     * =====================================================================
+     * STEP RENDERING & DISPLAY LOGIC
+     * =====================================================================
+     */
+    function renderStepTabs() {
+      stepBadgesContainer.innerHTML = '';
+      CHECKLIST_DATA.forEach((item, idx) => {
+        const btn = document.createElement('button');
+        const isCurrent = (idx === appState.currentStep);
+        btn.className = `px-2.5 py-1 rounded-xl text-xs font-bold transition whitespace-nowrap flex items-center gap-1 ${
+          isCurrent 
+            ? 'bg-skt-red text-white shadow-md shadow-skt-red/30' 
+            : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+        }`;
+        btn.textContent = item.badgeName;
+        btn.onclick = () => loadStep(idx);
+        stepBadgesContainer.appendChild(btn);
+      });
+    }
+
+    function loadStep(stepIndex) {
+      if (stepIndex >= CHECKLIST_DATA.length) {
+        showFinishModal();
+        return;
+      }
+      if (stepIndex < 0) stepIndex = 0;
+
+      appState.currentStep = stepIndex;
+      appState.recognizedKeywordSet.clear();
+
+      const data = CHECKLIST_DATA[stepIndex];
+
+      // Update Navigation Tabs
+      renderStepTabs();
+
+      // Update Points Badge
+      stepPointsBadge.className = `flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-bold whitespace-nowrap ${data.scoreBadgeStyle}`;
+      stepPointsBadge.innerHTML = `<i class="ph-bold ph-certificate"></i><span>${data.scoreLabel}</span>`;
+
+      // Update Guidance & Danger
+      stepGuideText.innerHTML = `<i class="ph-bold ph-info text-amber-400 text-sm"></i><span>${data.guide}</span>`;
+      if (data.dangerText) {
+        dangerNoticeBox.classList.remove('hidden');
+        dangerNoticeBox.classList.add('flex');
+        dangerNoticeText.textContent = data.dangerText;
+      } else {
+        dangerNoticeBox.classList.add('hidden');
+        dangerNoticeBox.classList.remove('flex');
+      }
+
+      // Generate & Render Script Text
+      const generatedScript = data.scriptFn(appState.storeName, appState.storeCode, appState.crewName, appState.shootDate);
+      scriptText.textContent = generatedScript;
+      applyFontScale();
+
+      // Render Required Keywords
+      renderKeywordChips();
+
+      // Navigation Buttons State
+      btnPrev.disabled = (stepIndex === 0);
+      btnPrev.classList.toggle('opacity-30', stepIndex === 0);
+
+      // Visual Transition Flash
+      teleprompterCard.classList.add('border-skt-blue');
+      setTimeout(() => teleprompterCard.classList.remove('border-skt-blue'), 350);
+    }
+
+    function renderKeywordChips() {
+      const data = CHECKLIST_DATA[appState.currentStep];
+      keywordChipsContainer.innerHTML = '';
+      let matchedCount = 0;
+
+      data.requiredKeywords.forEach(kw => {
+        const resolvedKw = (typeof kw === 'function') ? kw(appState.storeName) : kw;
+        const isMatched = appState.recognizedKeywordSet.has(resolvedKw);
+        if (isMatched) matchedCount++;
+
+        const chip = document.createElement('span');
+        chip.className = `px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all duration-300 ${
+          isMatched
+            ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-500/60 shadow-sm shadow-emerald-500/20 scale-105'
+            : 'bg-slate-800 text-slate-400 border border-slate-700/80'
+        }`;
+        chip.innerHTML = `
+          <i class="ph-bold ${isMatched ? 'ph-check-circle text-emerald-400' : 'ph-circle text-slate-500'} text-xs"></i>
+          <span>${resolvedKw}</span>
+        `;
+        keywordChipsContainer.appendChild(chip);
+      });
+
+      keywordCountText.textContent = `${matchedCount} / ${data.requiredKeywords.length} 매칭 (최소 ${data.minMatchesToAdvance}개로 자동 전환)`;
+    }
+
+    function advanceToNextStep() {
+      triggerAudioFeedback(880, 0.15); // Ding
+      loadStep(appState.currentStep + 1);
+    }
+
+    btnPrev.onclick = () => loadStep(appState.currentStep - 1);
+    btnNext.onclick = () => advanceToNextStep();
+
+    /**
+     * =====================================================================
+     * WEB SPEECH API (STT & AUTO ADVANCE)
+     * =====================================================================
+     */
+    let speechRecognizer = null;
+    let autoNextTimeout = null;
+
+    function initSpeechRecognition() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        speechStateMsg.textContent = "※ 브라우저가 음성 인식을 지원하지 않습니다. (Chrome 권장)";
+        speechStateMsg.classList.add('text-rose-400');
+        return;
+      }
+
+      speechRecognizer = new SpeechRecognition();
+      speechRecognizer.continuous = true;
+      speechRecognizer.interimResults = true;
+      speechRecognizer.lang = 'ko-KR';
+
+      speechRecognizer.onstart = () => {
+        appState.isMicActive = true;
+        micRingEffect.classList.remove('hidden');
+        btnToggleMic.className = "relative z-10 w-10 h-10 rounded-xl bg-skt-red border border-rose-500 text-white flex items-center justify-center transition";
+        micIcon.className = "ph-bold ph-microphone text-lg";
+        speechStateMsg.textContent = "음성을 듣고 있습니다. 화면의 대본을 편안하게 읽어주세요.";
+      };
+
+      speechRecognizer.onresult = (event) => {
+        let interimText = '';
+        let finalText = '';
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalText += event.results[i][0].transcript;
+          } else {
+            interimText += event.results[i][0].transcript;
+          }
+        }
+
+        const recognizedText = (finalText || interimText).trim();
+        if (recognizedText) {
+          speechInterimTranscript.textContent = `"${recognizedText}"`;
+          evaluateSpeech(recognizedText);
+        }
+      };
+
+      speechRecognizer.onerror = (e) => {
+        if (e.error === 'not-allowed') {
+          speechStateMsg.textContent = "마이크 사용 권한이 차단되었습니다. 주소창에서 권한을 허용해 주세요.";
+        }
+      };
+
+      speechRecognizer.onend = () => {
+        if (appState.isMicActive && setupModal.classList.contains('hidden') && finishModal.classList.contains('hidden')) {
+          try {
+            speechRecognizer.start();
+          } catch (err) {}
+        } else {
+          appState.isMicActive = false;
+          micRingEffect.classList.add('hidden');
+          btnToggleMic.className = "relative z-10 w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 text-slate-400 flex items-center justify-center hover:text-white transition";
+          micIcon.className = "ph-bold ph-microphone-slash text-lg";
+        }
+      };
+    }
+
+    function startVoiceListening() {
+      if (speechRecognizer && !appState.isMicActive) {
+        try {
+          speechRecognizer.start();
+        } catch (e) {}
+      }
+    }
+
+    function stopVoiceListening() {
+      appState.isMicActive = false;
+      if (speechRecognizer) {
+        try {
+          speechRecognizer.stop();
+        } catch (e) {}
+      }
+    }
+
+    btnToggleMic.onclick = () => {
+      if (appState.isMicActive) {
+        stopVoiceListening();
+        speechStateMsg.textContent = "마이크가 일시 중지되었습니다.";
+      } else {
+        startVoiceListening();
+      }
+    };
+
+    function evaluateSpeech(text) {
+      const data = CHECKLIST_DATA[appState.currentStep];
+      if (!data) return;
+
+      const normalized = text.replace(/\s+/g, '');
+
+      // Check Prohibited Word Alert in Step 3 (재설계 안내 시 '대신 변경/자동 변경' 금지)
+      if (appState.currentStep === 3) {
+        if (normalized.includes('대신변경') || normalized.includes('자동변경')) {
+          dangerNoticeBox.classList.add('animate-bounce');
+          triggerAudioFeedback(300, 0.25); // warning buzz
+        }
+      }
+
+      // Check Required Keywords
+      let isAnyNew = false;
+      data.requiredKeywords.forEach(kw => {
+        const target = ((typeof kw === 'function') ? kw(appState.storeName) : kw).replace(/\s+/g, '');
+        if (normalized.includes(target) && !appState.recognizedKeywordSet.has(target)) {
+          appState.recognizedKeywordSet.add((typeof kw === 'function') ? kw(appState.storeName) : kw);
+          isAnyNew = true;
+          triggerAudioFeedback(1100, 0.08); // keyword hit ping
+        }
+      });
+
+      if (isAnyNew) {
+        renderKeywordChips();
+      }
+
+      // Check Auto-advance Condition
+      if (appState.isAutoAdvance && appState.recognizedKeywordSet.size >= data.minMatchesToAdvance) {
+        if (!autoNextTimeout) {
+          teleprompterCard.classList.add('ring-4', 'ring-emerald-500/50');
+          speechStateMsg.textContent = "✅ 기준 키워드 통과! 1초 후 다음 단계로 자동 전환됩니다.";
+
+          autoNextTimeout = setTimeout(() => {
+            teleprompterCard.classList.remove('ring-4', 'ring-emerald-500/50');
+            autoNextTimeout = null;
+            advanceToNextStep();
+          }, 1100);
+        }
+      }
+    }
+
+    /**
+     * =====================================================================
+     * CONTROLS: FONT SCALE, AUTO-MODE, FULLSCREEN, MODALS
+     * =====================================================================
+     */
+    function applyFontScale() {
+      fontScaleDisplay.textContent = `${Math.round(appState.fontScale * 100)}%`;
+      scriptText.style.fontSize = `${appState.fontScale * 2.3}rem`;
+    }
+
+    btnFontInc.onclick = () => {
+      if (appState.fontScale < 1.8) {
+        appState.fontScale += 0.15;
+        applyFontScale();
+      }
+    };
+
+    btnFontDec.onclick = () => {
+      if (appState.fontScale > 0.7) {
+        appState.fontScale -= 0.15;
+        applyFontScale();
+      }
+    };
+
+    btnToggleAuto.onclick = () => {
+      appState.isAutoAdvance = !appState.isAutoAdvance;
+      if (appState.isAutoAdvance) {
+        btnToggleAuto.className = "flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition bg-emerald-500/20 text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/30";
+        autoStatusLabel.textContent = "ON";
+      } else {
+        btnToggleAuto.className = "flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200";
+        autoStatusLabel.textContent = "수동";
+      }
+    };
+
+    // Fullscreen Toggle
+    btnFullscreen.onclick = () => {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+        fsIcon.className = "ph-bold ph-arrows-in text-base";
+      } else {
+        if (document.exitFullscreen) {
+          document.exitFullscreen();
+          fsIcon.className = "ph-bold ph-arrows-out text-base";
+        }
+      }
+    };
+
+    // Setup & Tip Modals
+    btnOpenSetup.onclick = () => {
+      setupModal.classList.remove('hidden');
+    };
+
+    btnOpenTipModal.onclick = () => tipModal.classList.remove('hidden');
+    btnCloseTipModal.onclick = () => tipModal.classList.add('hidden');
+    btnConfirmTipModal.onclick = () => tipModal.classList.add('hidden');
+
+    function showFinishModal() {
+      triggerAudioFeedback(523, 0.3); // success chime
+      finishModal.classList.remove('hidden');
+    }
+
+    btnRestartAll.onclick = () => {
+      finishModal.classList.add('hidden');
+      loadStep(0);
+    };
+
+    btnCloseFinish.onclick = () => {
+      finishModal.classList.add('hidden');
+    };
+
+    /**
+     * =====================================================================
+     * KEYBOARD SHORTCUTS
+     * =====================================================================
+     */
+    window.addEventListener('keydown', (e) => {
+      // Ignore if user is typing in form inputs
+      if (e.target.tagName === 'INPUT') return;
+
+      if (e.code === 'Space' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        advanceToNextStep();
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        loadStep(appState.currentStep - 1);
+      } else if (e.key.toLowerCase() === 'm') {
+        btnToggleMic.click();
+      } else if (e.key.toLowerCase() === 'f') {
+        btnFullscreen.click();
+      } else if (e.key === '+' || e.key === '=') {
+        btnFontInc.click();
+      } else if (e.key === '-') {
+        btnFontDec.click();
+      }
+    });
+  </script>
+</body>
+</html>
