@@ -230,7 +230,56 @@
     let isTransitioning = false;
     let isSpeechEngineRunning = false;
     let shouldBeRecognizing = false;
-    let stepStartTime = 0; // 페이지 전환 후 즉시 넘김 방지용 쿨다운 시간
+    let stepStartTime = 0;
+    let resultBoundary = 0; // 현재 단계 시작 전에 생성된 STT 결과 수
+    let latestResultCount = 0;
+    let processedFinalResults = new Set(); // 같은 final 결과의 중복 누적 방지
+    let stageFinalTranscript = '';
+    let stageInterimTranscript = '';
+    let restartTimer = null;
+    let transitionTimer = null;
+    let micPermissionBlocked = false;
+    const MIN_STAGE_TIME_MS = 2000;
+
+    const normalizeSpeech = text => String(text || '')
+      .toLowerCase().replace(/[^가-힣0-9a-z]/g, '');
+
+    // STT에서 자주 발생하는 띄어쓰기/발음 변형을 허용하되 필수 의미 단위는 유지
+    const KEYWORD_ALIASES = {
+      '반갑습니다': ['반갑습니다', '방갑습니다', '반갑'],
+      '완전무제한': ['완전무제한', '완전 무제한', '완전 무제한입니다'],
+      '우주패스': ['우주패스', '우주 패스'],
+      '요즘가족결합': ['요즘가족결합', '요즘 가족 결합'],
+      '패턴분석': ['패턴분석', '패턴을분석', '패턴 분석'],
+      '추가할인': ['추가할인', '추가 할인'],
+      '좋은하루': ['좋은하루', '좋은 하루'],
+      'Btv': ['btv', '비티비', '비티브이'],
+      'VIP': ['vip', '브이아이피']
+    };
+
+    function hasKeyword(spoken, keyword) {
+      const target = keyword.replace('{shopName}', userProfile.shopName);
+      const variants = KEYWORD_ALIASES[target] || [target];
+      return variants.some(value => spoken.includes(normalizeSpeech(value)));
+    }
+
+    // 단순 글자 수만으로 자동 넘김하지 않음. 단계별 핵심 발화가 모두 필요함.
+    const REQUIRED_GROUPS = {
+      0: [['촬영일'], ['매장코드'], ['매장명'], ['롤플레잉'], ['평가']],
+      1: [['반갑습니다'], ['{shopName}'], ['오늘'], ['어떤'], ['업무'], ['도와드릴까요', '드릴까요']],
+      2: [['베스트'], ['완전무제한'], ['우주패스', '전용혜택'], ['스마트기기'], ['무료'], ['VIP']],
+      3: [['6개월'], ['이용'], ['매장'], ['연락', '방문'], ['패턴분석'], ['재설계']],
+      4: [['제휴카드'], ['기기값'], ['추가할인'], ['요즘가족결합'], ['인터넷'], ['Btv']],
+      5: [['요약'], ['문자'], ['전송'], ['궁금하신'], ['연락'], ['좋은하루']]
+    };
+    const END_PHRASES = {
+      0: ['평가시작하겠습니다', '평가시작합니다'],
+      1: ['업무도와드릴까요', '도와드릴까요', '드릴까요'],
+      2: ['모두누리실수있습니다', '누리실수있습니다'],
+      3: ['재설계해드리겠습니다', '재설계해드릴게요'],
+      4: ['챙기실수있습니다', '할인혜택을챙기실수있습니다'],
+      5: ['좋은하루되십시오', '좋은하루되세요']
+    };
 
     function setTodayDate() {
       const today = new Date();
@@ -279,12 +328,20 @@
     }
 
     function renderStep(stepIndex) {
+      if (transitionTimer) { clearTimeout(transitionTimer); transitionTimer = null; }
       currentStep = stepIndex;
       accumulatedTranscript = '';
       recognizedKeywords.clear();
       isTransitioning = false;
-      stepStartTime = Date.now(); // 페이지 진입 시각 기록 (최소 1.5초간 완독 판정 차단)
+      stepStartTime = Date.now();
+      // 기존 음성인식 세션은 유지하고 이전 단계의 result 인덱스만 제외
+      resultBoundary = latestResultCount;
+      stageFinalTranscript = '';
+      stageInterimTranscript = '';
+      processedFinalResults.clear();
 
+      document.getElementById('statusNotice').textContent = '마지막 문장까지 끝까지 읽으면 자동으로 넘어갑니다';
+      document.getElementById('statusNotice').className = 'text-[11px] text-yellow-400/90 font-medium';
       const liveTextEl = document.getElementById('liveSttText');
       if (liveTextEl) liveTextEl.textContent = "새 멘트를 읽어주세요...";
 
@@ -356,70 +413,38 @@
       }
     }
 
-    function evaluateCompletion(fullSpokenText) {
+    function evaluateCompletion(fullSpokenText, isFinalUpdate = false) {
       if (isTransitioning) return;
-      
-      // 가드레일 1: 새 페이지 진입 직후 1.5초 동안은 넘김 방지 (이전 페이지 잔여 음성 간섭 차단)
-      if (Date.now() - stepStartTime < 1500) return;
-
       const stage = CHECKLIST_DATA[currentStep];
-      const cleanSpoken = fullSpokenText.replace(/[^가-힣0-9a-zA-Z]/g, '');
-      
-      // 동적으로 매장명 등이 치환된 실제 전체 스크립트 기준으로 길이 계산
-      const dynamicTemplate = stage.template
+      const spoken = normalizeSpeech(fullSpokenText);
+      if (!spoken) return;
+
+      stage.keywords.forEach(kw => {
+        const display = kw.replace('{shopName}', userProfile.shopName);
+        if (hasKeyword(spoken, kw)) recognizedKeywords.add(display);
+      });
+      refreshKeywordChips();
+
+      // 스크롤은 임시 결과도 사용하지만, 자동 넘김은 확정(final) 결과만 사용
+      const template = stage.template
         .replace('{date}', userProfile.date)
         .replace('{shopCode}', userProfile.shopCode)
         .replace(/{shopName}/g, userProfile.shopName)
         .replace('{name}', userProfile.name);
-      const cleanTemplate = dynamicTemplate.replace(/[^가-힣0-9a-zA-Z]/g, '');
+      const templateLength = normalizeSpeech(template).length;
+      const lengthRatio = templateLength ? spoken.length / templateLength : 0;
+      const keywordRatio = recognizedKeywords.size / Math.max(1, stage.keywords.length);
+      triggerAutoScroll(Math.min(1, Math.max(keywordRatio, Math.min(1, lengthRatio))));
 
-      // 키워드 검출
-      stage.keywords.forEach(kw => {
-        const targetKw = kw.replace('{shopName}', userProfile.shopName);
-        const cleanKw = targetKw.replace(/[^가-힣0-9a-zA-Z]/g, '');
-        if (cleanKw && cleanSpoken.includes(cleanKw)) {
-          recognizedKeywords.add(targetKw);
-        }
-      });
-      refreshKeywordChips();
+      if (!isFinalUpdate || Date.now() - stepStartTime < MIN_STAGE_TIME_MS) return;
 
-      const keywordRatio = stage.keywords.length > 0 ? (recognizedKeywords.size / stage.keywords.length) : 1;
-      const lengthRatio = cleanTemplate.length > 0 ? (cleanSpoken.length / cleanTemplate.length) : 0;
-      const estimatedProgress = Math.max(keywordRatio, Math.min(1, lengthRatio));
-      
-      triggerAutoScroll(estimatedProgress);
-
-      // 가드레일 2: 단계별 최소 발화 길이율 잠금 (3페이지[STAGE 2], 5페이지[STAGE 4]는 80% 미만 시 꼬리말 무시)
-      let minLengthThreshold = 0.75;
-      let minKeywordsCount = 2;
-
-      if (stage.id === 2 || stage.id === 4) {
-        minLengthThreshold = 0.80; // 긴 문장: 최소 80% 이상 읽어야 꼬리말 활성화
-        minKeywordsCount = 4;
-      } else if (stage.id === 3 || stage.id === 5) {
-        minLengthThreshold = 0.75;
-        minKeywordsCount = 3;
-      } else {
-        // STAGE 0, 1 (짧은 멘트)
-        minLengthThreshold = 0.70;
-        minKeywordsCount = 2;
-      }
-
-      // 가드레일 3: 꼬리말은 발화의 후반 40% 영역(또는 최소 끝 35자)에서 발화되었을 때만 매칭
-      const tailSearchRange = Math.max(35, Math.floor(cleanSpoken.length * 0.4));
-      const trailingSpoken = cleanSpoken.slice(-tailSearchRange);
-
-      const saidTail = stage.tailKeywords.some(tail => {
-        const cleanTail = tail.replace(/[^가-힣0-9a-zA-Z]/g, '');
-        return trailingSpoken.includes(cleanTail);
-      });
-
-      // 판정:
-      // (최소 길이율 통과 AND 후반부 꼬리말 일치 AND 주요 키워드 충족) OR (전체 길이 95% 이상 완독)
-      const isEligibleByTail = (lengthRatio >= minLengthThreshold) && saidTail && (recognizedKeywords.size >= minKeywordsCount);
-      const isEligibleByLength = (lengthRatio >= 0.95);
-
-      if (isEligibleByTail || isEligibleByLength) {
+      const groups = REQUIRED_GROUPS[stage.id] || [];
+      const allRequired = groups.every(group => group.some(kw => hasKeyword(spoken, kw)));
+      const endings = END_PHRASES[stage.id] || [];
+      // 꼬리말이 실제 발화 끝부분에 있어야 하며, 중간에 언급된 표현은 인정하지 않음
+      const endMatched = endings.some(ending => spoken.endsWith(normalizeSpeech(ending)));
+      // 단순 길이 95% 예외를 삭제하여 무관한 발화로 넘어가는 오류 방지
+      if (allRequired && endMatched && lengthRatio >= 0.55) {
         completeCurrentStep();
       }
     }
@@ -436,7 +461,8 @@
       document.getElementById('statusNotice').textContent = "✔ 완독 확인! 다음 단계로 넘어갑니다";
       document.getElementById('statusNotice').className = "text-[11px] text-emerald-400 font-bold";
 
-      setTimeout(() => {
+      transitionTimer = setTimeout(() => {
+        transitionTimer = null;
         document.getElementById('statusNotice').textContent = "마지막 문장까지 끝까지 읽으면 자동으로 넘어갑니다";
         document.getElementById('statusNotice').className = "text-[11px] text-yellow-400/90 font-medium";
 
@@ -464,89 +490,81 @@
     function startSpeechEngine() {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechRecognition) {
-        document.getElementById('micStatusText').textContent = "STT 미지원 브라우저";
-        document.getElementById('micDot').className = "w-3 h-3 rounded-full bg-gray-500";
+        document.getElementById('micStatusText').textContent = 'STT 미지원 브라우저';
+        document.getElementById('micDot').className = 'w-3 h-3 rounded-full bg-gray-500';
         return;
       }
+      if (micPermissionBlocked || isSpeechEngineRunning) return;
+      if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
+      if (!recognition) {
+        recognition = new SpeechRecognition();
+        recognition.lang = 'ko-KR';
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.maxAlternatives = 1;
 
-      if (recognition && isSpeechEngineRunning) {
-        return;
-      }
-
-      if (recognition) {
-        try { recognition.abort(); } catch(e) {}
-      }
-
-      recognition = new SpeechRecognition();
-      recognition.lang = 'ko-KR';
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.maxAlternatives = 1;
-
-      recognition.onstart = () => {
-        isSpeechEngineRunning = true;
-        document.getElementById('micStatusText').textContent = "실시간 음성인식 ON";
-        document.getElementById('micDot').className = "w-3 h-3 rounded-full bg-emerald-500 pulse-record";
-      };
-
-      recognition.onerror = (e) => {
-        if (e.error !== 'no-speech') {
-          console.warn("STT 상태 알림:", e.error);
-        }
-        if (e.error === 'not-allowed') {
-          document.getElementById('micStatusText').textContent = "마이크 권한 필요(터치)";
-          document.getElementById('micDot').className = "w-3 h-3 rounded-full bg-yellow-500";
-        }
-      };
-
-      recognition.onend = () => {
-        isSpeechEngineRunning = false;
-        if (shouldBeRecognizing) {
-          setTimeout(() => {
-            if (!isSpeechEngineRunning && shouldBeRecognizing) {
-              try { recognition.start(); } catch(e) {}
-            }
-          }, 100);
-        } else {
-          document.getElementById('micStatusText').textContent = "음성인식 대기";
-          document.getElementById('micDot').className = "w-3 h-3 rounded-full bg-red-500";
-        }
-      };
-
-      recognition.onresult = (event) => {
-        if (isTransitioning) return;
-
-        let currentInterim = '';
-        let newlyFinal = '';
-
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          const piece = event.results[i][0].transcript;
-          if (event.results[i].isFinal) {
-            newlyFinal += ' ' + piece;
-          } else {
-            currentInterim += piece;
+        recognition.onstart = () => {
+          isSpeechEngineRunning = true;
+          document.getElementById('micStatusText').textContent = '실시간 음성인식 ON';
+          document.getElementById('micDot').className = 'w-3 h-3 rounded-full bg-emerald-500 pulse-record';
+        };
+        recognition.onerror = e => {
+          if (e.error !== 'no-speech') console.warn('STT 상태:', e.error);
+          if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+            micPermissionBlocked = true;
+            shouldBeRecognizing = false;
+            document.getElementById('micStatusText').textContent = '마이크 권한 필요(터치)';
+            document.getElementById('micDot').className = 'w-3 h-3 rounded-full bg-yellow-500';
           }
-        }
-
-        if (newlyFinal) {
-          accumulatedTranscript += ' ' + newlyFinal;
-        }
-
-        const fullSpoken = (accumulatedTranscript + ' ' + currentInterim).trim();
-        if (!fullSpoken) return;
-
-        document.getElementById('liveSttText').textContent = fullSpoken;
-        evaluateCompletion(fullSpoken);
-      };
-
-      try {
-        recognition.start();
-      } catch (err) {
-        console.error("Mic start err:", err);
+        };
+        recognition.onend = () => {
+          isSpeechEngineRunning = false;
+          // STT 세션이 실제 종료될 때만 재시작 (단계 전환 시에는 유지)
+          if (shouldBeRecognizing && !micPermissionBlocked) {
+            restartTimer = setTimeout(() => {
+              restartTimer = null;
+              startSpeechEngine();
+            }, 350);
+          } else {
+            document.getElementById('micStatusText').textContent = '음성인식 대기';
+            document.getElementById('micDot').className = 'w-3 h-3 rounded-full bg-red-500';
+          }
+        };
+        recognition.onresult = event => {
+          latestResultCount = Math.max(latestResultCount, event.results.length);
+          if (isTransitioning) return;
+          let interim = '';
+          let addedFinal = false;
+          for (let i = resultBoundary; i < event.results.length; i++) {
+            const result = event.results[i];
+            const piece = result[0].transcript;
+            if (result.isFinal) {
+              if (!processedFinalResults.has(i)) {
+                processedFinalResults.add(i);
+                stageFinalTranscript += ' ' + piece;
+                addedFinal = true;
+              }
+            } else {
+              interim += ' ' + piece;
+            }
+          }
+          stageInterimTranscript = interim;
+          const spoken = (stageFinalTranscript + ' ' + stageInterimTranscript).trim();
+          if (!spoken) return;
+          document.getElementById('liveSttText').textContent = spoken;
+          evaluateCompletion(spoken, false);
+          if (addedFinal) evaluateCompletion(stageFinalTranscript, true);
+        };
+      }
+      try { recognition.start(); }
+      catch (err) {
+        // 이미 시작 중인 경우에는 다음 onstart/onend를 기다림
+        if (err.name !== 'InvalidStateError') console.warn('마이크 시작:', err);
       }
     }
 
     function manualToggleMic() {
+      micPermissionBlocked = false;
       shouldBeRecognizing = true;
       startSpeechEngine();
     }
