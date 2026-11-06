@@ -378,13 +378,22 @@
       
       triggerAutoScroll(estimatedProgress);
 
+      // 1. 단계별 최소 발화 길이율 잠금 (3페이지[STAGE 2], 5페이지[STAGE 4]는 75% 미만 시 꼬리말 무시)
+      const minLengthThreshold = (stage.id === 2 || stage.id === 4) ? 0.75 : 0.70;
+
+      // 2. 꼬리말은 발화의 맨 끝부분(최근 25자)에서 말했을 때만 유효하게 검사 (중간 어미 오작동 방지)
+      const recentSpoken = cleanSpoken.slice(-25);
       const saidTail = stage.tailKeywords.some(tail => {
         const cleanTail = tail.replace(/[^가-힣0-9a-zA-Z]/g, '');
-        return cleanSpoken.includes(cleanTail);
+        return recentSpoken.includes(cleanTail);
       });
 
-      const hasEnoughKeywords = recognizedKeywords.size >= 2 || keywordRatio >= 0.4;
-      if (saidTail && (hasEnoughKeywords || lengthRatio >= 0.45)) {
+      // 3. 완독 판정:
+      // (최소 길이율 달성 AND 끝부분 꼬리말 매칭 AND 키워드 50% 이상) OR (전체 길이 95% 이상 도달 시 통과)
+      const hasEnoughLength = lengthRatio >= minLengthThreshold;
+      const hasEnoughKeywords = keywordRatio >= 0.5 || recognizedKeywords.size >= Math.ceil(stage.keywords.length * 0.5);
+
+      if ((hasEnoughLength && saidTail && hasEnoughKeywords) || lengthRatio >= 0.95) {
         completeCurrentStep();
       }
     }
