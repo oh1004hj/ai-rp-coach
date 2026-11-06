@@ -230,6 +230,7 @@
     let isTransitioning = false;
     let isSpeechEngineRunning = false;
     let shouldBeRecognizing = false;
+    let stepStartTime = 0; // 페이지 전환 후 즉시 넘김 방지용 쿨다운 시간
 
     function setTodayDate() {
       const today = new Date();
@@ -247,7 +248,6 @@
       setTodayDate();
     }
 
-    // 모바일 터치 시 권한 획득 후 즉시 음성 인식 가동
     async function finishSetup() {
       const today = new Date();
       const yyyy = today.getFullYear();
@@ -278,12 +278,12 @@
       startSpeechEngine();
     }
 
-    // 단계 전환 시 마이크 인스턴스는 절대 끄지 않고 텍스트 버퍼만 리셋
     function renderStep(stepIndex) {
       currentStep = stepIndex;
       accumulatedTranscript = '';
       recognizedKeywords.clear();
       isTransitioning = false;
+      stepStartTime = Date.now(); // 페이지 진입 시각 기록 (최소 1.5초간 완독 판정 차단)
 
       const liveTextEl = document.getElementById('liveSttText');
       if (liveTextEl) liveTextEl.textContent = "새 멘트를 읽어주세요...";
@@ -358,42 +358,68 @@
 
     function evaluateCompletion(fullSpokenText) {
       if (isTransitioning) return;
+      
+      // 가드레일 1: 새 페이지 진입 직후 1.5초 동안은 넘김 방지 (이전 페이지 잔여 음성 간섭 차단)
+      if (Date.now() - stepStartTime < 1500) return;
 
       const stage = CHECKLIST_DATA[currentStep];
       const cleanSpoken = fullSpokenText.replace(/[^가-힣0-9a-zA-Z]/g, '');
-      const cleanTemplate = stage.template.replace(/[^가-힣0-9a-zA-Z]/g, '');
+      
+      // 동적으로 매장명 등이 치환된 실제 전체 스크립트 기준으로 길이 계산
+      const dynamicTemplate = stage.template
+        .replace('{date}', userProfile.date)
+        .replace('{shopCode}', userProfile.shopCode)
+        .replace(/{shopName}/g, userProfile.shopName)
+        .replace('{name}', userProfile.name);
+      const cleanTemplate = dynamicTemplate.replace(/[^가-힣0-9a-zA-Z]/g, '');
 
+      // 키워드 검출
       stage.keywords.forEach(kw => {
         const targetKw = kw.replace('{shopName}', userProfile.shopName);
         const cleanKw = targetKw.replace(/[^가-힣0-9a-zA-Z]/g, '');
-        if (cleanSpoken.includes(cleanKw)) {
+        if (cleanKw && cleanSpoken.includes(cleanKw)) {
           recognizedKeywords.add(targetKw);
         }
       });
       refreshKeywordChips();
 
       const keywordRatio = stage.keywords.length > 0 ? (recognizedKeywords.size / stage.keywords.length) : 1;
-      const lengthRatio = cleanTemplate.length > 0 ? (cleanSpoken.length / cleanTemplate.length) : 1;
+      const lengthRatio = cleanTemplate.length > 0 ? (cleanSpoken.length / cleanTemplate.length) : 0;
       const estimatedProgress = Math.max(keywordRatio, Math.min(1, lengthRatio));
       
       triggerAutoScroll(estimatedProgress);
 
-      // 1. 단계별 최소 발화 길이율 잠금 (3페이지[STAGE 2], 5페이지[STAGE 4]는 75% 미만 시 꼬리말 무시)
-      const minLengthThreshold = (stage.id === 2 || stage.id === 4) ? 0.75 : 0.70;
+      // 가드레일 2: 단계별 최소 발화 길이율 잠금 (3페이지[STAGE 2], 5페이지[STAGE 4]는 80% 미만 시 꼬리말 무시)
+      let minLengthThreshold = 0.75;
+      let minKeywordsCount = 2;
 
-      // 2. 꼬리말은 발화의 맨 끝부분(최근 25자)에서 말했을 때만 유효하게 검사 (중간 어미 오작동 방지)
-      const recentSpoken = cleanSpoken.slice(-25);
+      if (stage.id === 2 || stage.id === 4) {
+        minLengthThreshold = 0.80; // 긴 문장: 최소 80% 이상 읽어야 꼬리말 활성화
+        minKeywordsCount = 4;
+      } else if (stage.id === 3 || stage.id === 5) {
+        minLengthThreshold = 0.75;
+        minKeywordsCount = 3;
+      } else {
+        // STAGE 0, 1 (짧은 멘트)
+        minLengthThreshold = 0.70;
+        minKeywordsCount = 2;
+      }
+
+      // 가드레일 3: 꼬리말은 발화의 후반 40% 영역(또는 최소 끝 35자)에서 발화되었을 때만 매칭
+      const tailSearchRange = Math.max(35, Math.floor(cleanSpoken.length * 0.4));
+      const trailingSpoken = cleanSpoken.slice(-tailSearchRange);
+
       const saidTail = stage.tailKeywords.some(tail => {
         const cleanTail = tail.replace(/[^가-힣0-9a-zA-Z]/g, '');
-        return recentSpoken.includes(cleanTail);
+        return trailingSpoken.includes(cleanTail);
       });
 
-      // 3. 완독 판정:
-      // (최소 길이율 달성 AND 끝부분 꼬리말 매칭 AND 키워드 50% 이상) OR (전체 길이 95% 이상 도달 시 통과)
-      const hasEnoughLength = lengthRatio >= minLengthThreshold;
-      const hasEnoughKeywords = keywordRatio >= 0.5 || recognizedKeywords.size >= Math.ceil(stage.keywords.length * 0.5);
+      // 판정:
+      // (최소 길이율 통과 AND 후반부 꼬리말 일치 AND 주요 키워드 충족) OR (전체 길이 95% 이상 완독)
+      const isEligibleByTail = (lengthRatio >= minLengthThreshold) && saidTail && (recognizedKeywords.size >= minKeywordsCount);
+      const isEligibleByLength = (lengthRatio >= 0.95);
 
-      if ((hasEnoughLength && saidTail && hasEnoughKeywords) || lengthRatio >= 0.95) {
+      if (isEligibleByTail || isEligibleByLength) {
         completeCurrentStep();
       }
     }
@@ -435,7 +461,6 @@
       document.getElementById('fontSizeDisplay').textContent = `${baseFontSize}px`;
     }
 
-    // 모바일 완전 대응형 무중단 STT 엔진
     function startSpeechEngine() {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechRecognition) {
