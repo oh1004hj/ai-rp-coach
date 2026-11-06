@@ -228,6 +228,7 @@
     let accumulatedTranscript = '';
     let recognizedKeywords = new Set();
     let isTransitioning = false;
+    let isSpeechEngineRunning = false;
     let shouldBeRecognizing = false;
 
     function setTodayDate() {
@@ -246,7 +247,7 @@
       setTodayDate();
     }
 
-    // 모바일 터치 이벤트 직후 마이크 하드웨어 스트림을 미리 승인받음
+    // 모바일 터치 시 권한 획득 후 즉시 음성 인식 가동
     async function finishSetup() {
       const today = new Date();
       const yyyy = today.getFullYear();
@@ -262,14 +263,12 @@
       document.getElementById('headerShopInfo').textContent = userProfile.shopName;
       document.getElementById('headerCrewInfo').textContent = userProfile.name;
 
-      // 모바일 사파리/크롬 권한 팝업 즉각 트리거
       if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          // 스트림 열림 확인 후 즉시 해제 (STT 엔진이 마이크를 독점할 수 있도록 함)
           stream.getTracks().forEach(track => track.stop());
         } catch (err) {
-          console.warn("마이크 권한 거부 또는 HTTPS 미적용:", err);
+          console.warn("마이크 권한 알림:", err);
         }
       }
 
@@ -279,6 +278,7 @@
       startSpeechEngine();
     }
 
+    // 단계 전환 시 마이크 인스턴스는 절대 끄지 않고 텍스트 버퍼만 리셋
     function renderStep(stepIndex) {
       currentStep = stepIndex;
       accumulatedTranscript = '';
@@ -426,12 +426,16 @@
       document.getElementById('fontSizeDisplay').textContent = `${baseFontSize}px`;
     }
 
-    // 모바일 전용 무중단 STT 엔진 (단발성 연속 재시동 기법)
+    // 모바일 완전 대응형 무중단 STT 엔진
     function startSpeechEngine() {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechRecognition) {
         document.getElementById('micStatusText').textContent = "STT 미지원 브라우저";
         document.getElementById('micDot').className = "w-3 h-3 rounded-full bg-gray-500";
+        return;
+      }
+
+      if (recognition && isSpeechEngineRunning) {
         return;
       }
 
@@ -441,18 +445,20 @@
 
       recognition = new SpeechRecognition();
       recognition.lang = 'ko-KR';
-      // 모바일 사파리/크롬 락다운 방지: false로 단발 실행 후 onend에서 계속 살려냄
-      recognition.continuous = false;
+      recognition.continuous = true;
       recognition.interimResults = true;
       recognition.maxAlternatives = 1;
 
       recognition.onstart = () => {
+        isSpeechEngineRunning = true;
         document.getElementById('micStatusText').textContent = "실시간 음성인식 ON";
         document.getElementById('micDot').className = "w-3 h-3 rounded-full bg-emerald-500 pulse-record";
       };
 
       recognition.onerror = (e) => {
-        console.warn("STT 상태 알림:", e.error);
+        if (e.error !== 'no-speech') {
+          console.warn("STT 상태 알림:", e.error);
+        }
         if (e.error === 'not-allowed') {
           document.getElementById('micStatusText').textContent = "마이크 권한 필요(터치)";
           document.getElementById('micDot').className = "w-3 h-3 rounded-full bg-yellow-500";
@@ -460,13 +466,13 @@
       };
 
       recognition.onend = () => {
-        // 사용자가 종료하지 않았고 단계 전환 중이 아닐 때 즉시 재시동
-        if (shouldBeRecognizing && !isTransitioning) {
+        isSpeechEngineRunning = false;
+        if (shouldBeRecognizing) {
           setTimeout(() => {
-            try {
-              recognition.start();
-            } catch(e) {}
-          }, 80);
+            if (!isSpeechEngineRunning && shouldBeRecognizing) {
+              try { recognition.start(); } catch(e) {}
+            }
+          }, 100);
         } else {
           document.getElementById('micStatusText').textContent = "음성인식 대기";
           document.getElementById('micDot').className = "w-3 h-3 rounded-full bg-red-500";
@@ -476,16 +482,23 @@
       recognition.onresult = (event) => {
         if (isTransitioning) return;
 
-        let piece = '';
-        for (let i = 0; i < event.results.length; ++i) {
-          piece += event.results[i][0].transcript;
+        let currentInterim = '';
+        let newlyFinal = '';
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const piece = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            newlyFinal += ' ' + piece;
+          } else {
+            currentInterim += piece;
+          }
         }
 
-        if (piece) {
-          accumulatedTranscript += ' ' + piece;
+        if (newlyFinal) {
+          accumulatedTranscript += ' ' + newlyFinal;
         }
 
-        const fullSpoken = accumulatedTranscript.trim();
+        const fullSpoken = (accumulatedTranscript + ' ' + currentInterim).trim();
         if (!fullSpoken) return;
 
         document.getElementById('liveSttText').textContent = fullSpoken;
@@ -499,7 +512,6 @@
       }
     }
 
-    // 마이크가 멈췄을 때 상단 마이크 버튼을 눌러 수동으로 즉시 켤 수 있는 비상 토글
     function manualToggleMic() {
       shouldBeRecognizing = true;
       startSpeechEngine();
