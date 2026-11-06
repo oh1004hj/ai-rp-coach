@@ -23,7 +23,7 @@
 
     /* 텔레프롬프터 전용 부드러운 스크롤 */
     .prompter-viewport {
-      height: calc(100vh - 210px);
+      height: calc(100vh - 215px);
       overflow-y: auto;
       scroll-behavior: smooth;
       -ms-overflow-style: none;
@@ -31,13 +31,6 @@
     }
     .prompter-viewport::-webkit-scrollbar {
       display: none;
-    }
-
-    /* 고대비 텍스트 하이라이트 */
-    .kw-matched {
-      color: #34d399 !important;
-      text-shadow: 0 0 12px rgba(52, 211, 153, 0.4);
-      font-weight: 800;
     }
 
     .pulse-record {
@@ -48,7 +41,6 @@
       to { box-shadow: 0 0 0 14px rgba(239, 68, 68, 0); }
     }
 
-    /* 텍스트 가독성 강화 림 라이트 */
     .script-text {
       line-height: 1.85;
       letter-spacing: -0.02em;
@@ -80,15 +72,11 @@
         <button onclick="adjustFontSize(2)" class="px-2.5 py-1 text-xs font-bold text-gray-300 hover:text-white rounded active:bg-gray-800" title="글자 확대">A+</button>
       </div>
 
-      <button onclick="openGuideModal()" class="px-3 py-1.5 bg-gray-900 hover:bg-gray-800 text-gray-300 text-xs font-semibold rounded-lg border border-gray-800">
-        가이드
-      </button>
-
       <button onclick="prevStep()" class="px-3 py-1.5 bg-gray-900 hover:bg-gray-800 text-gray-300 text-xs font-semibold rounded-lg border border-gray-800 active:scale-95">
         이전
       </button>
-      <button onclick="nextStep()" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg shadow-lg shadow-indigo-600/30 active:scale-95">
-        다음
+      <button onclick="forceNextStep()" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg shadow-lg shadow-indigo-600/30 active:scale-95">
+        수동 넘김
       </button>
     </div>
   </header>
@@ -115,42 +103,42 @@
             필수 확인
           </span>
           <span id="accuracyBadge" class="text-xs bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 font-semibold px-2 py-0.5 rounded-md">
-            완독률: 0%
+            진행률: 0%
           </span>
         </div>
       </div>
 
       <!-- 감점 방지 주의 알림 카드 -->
       <div id="penaltyAlert" class="bg-rose-950/30 border border-rose-800/50 rounded-2xl p-3.5 flex items-start gap-2.5 text-xs text-rose-300">
-        <span class="text-rose-400 font-bold shrink-0">⚠ 주의사항:</span>
+        <span class="text-rose-400 font-bold shrink-0">⚠ 감점 주의:</span>
         <span id="penaltyText">카메라 렌즈를 정면으로 응시하며 끊김 없이 또박또박 발화하세요.</span>
       </div>
 
-      <!-- 핵심 텔레프롬프터 대본 카드 -->
+      <!-- 텔레프롬프터 대본 카드 -->
       <div class="bg-gray-900/40 border border-gray-800/60 rounded-3xl p-6 sm:p-8 shadow-2xl relative">
         <div id="scriptContent" class="script-text text-gray-100 font-semibold text-center select-none" style="font-size: 26px;">
           <!-- 렌더링 텍스트 -->
         </div>
 
-        <!-- 모바일 하단 잘림 방지용 스크롤 타겟 앵커 -->
-        <div id="bottomScrollAnchor" class="h-16"></div>
+        <!-- 하단 자동 스크롤 여백 -->
+        <div id="bottomScrollAnchor" class="h-20"></div>
       </div>
 
     </div>
   </main>
 
-  <!-- ================= BOTTOM HUD (실시간 STT & 트리거) ================= -->
+  <!-- ================= BOTTOM HUD ================= -->
   <footer class="bg-gray-950 border-t border-gray-800/80 p-3 sm:p-4 shrink-0 z-20">
-    <div class="max-w-2xl mx-auto space-y-2.5">
+    <div class="max-w-2xl mx-auto space-y-2">
       
       <!-- 트리거 키워드 상태 -->
       <div class="flex items-center justify-between text-xs text-gray-400">
         <div class="flex items-center gap-1.5 font-bold text-gray-300">
-          <span>🎯 완독 검증 키워드</span>
+          <span>🎯 완독 진행 체크</span>
           <span id="keywordCount" class="text-emerald-400">(0 / 4)</span>
         </div>
-        <div id="statusNotice" class="text-[11px] text-gray-400 font-medium">
-          대본을 80% 이상 정확히 완독해야 넘어갑니다
+        <div id="statusNotice" class="text-[11px] text-yellow-400/90 font-medium">
+          마지막 문장까지 끝까지 읽으면 자동으로 넘어갑니다
         </div>
       </div>
 
@@ -161,7 +149,7 @@
 
       <!-- 실시간 인식 텍스트 스트림 -->
       <div class="bg-black/50 border border-gray-800 rounded-xl px-3 py-2 flex items-center justify-between text-xs">
-        <span class="text-gray-500 shrink-0 mr-2 font-mono text-[10px]">LIVE STT:</span>
+        <span class="text-gray-500 shrink-0 mr-2 font-mono text-[10px]">인식중:</span>
         <span id="liveSttText" class="text-gray-300 truncate font-medium">마이크에 대고 대본을 읽어주세요...</span>
       </div>
 
@@ -202,40 +190,23 @@
     </div>
   </div>
 
-  <!-- ================= GUIDE MODAL ================= -->
-  <div id="guideModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-    <div class="bg-gray-900 border border-gray-800 rounded-3xl p-6 w-full max-w-lg shadow-2xl space-y-4">
-      <div class="flex items-center justify-between border-b border-gray-800 pb-3">
-        <h3 class="text-base font-bold text-white">26.4Q AI 영상평가 핵심 가이드</h3>
-        <button onclick="closeGuideModal()" class="text-gray-400 hover:text-white text-lg">✕</button>
-      </div>
-      <div class="space-y-3 text-xs text-gray-300 leading-relaxed max-h-[60vh] overflow-y-auto pr-1">
-        <p><b class="text-indigo-300">1. 시선 처리 및 낭독 방지:</b> 프롬프터 폰을 촬영용 카메라 렌즈 바로 옆/위에 밀착 배치하여 고객을 정면으로 응시하는 느낌을 유지하세요.</p>
-        <p><b class="text-indigo-300">2. 모바일 자동 스크롤:</b> 대본을 소리 내어 읽으면 진행도에 맞춰 화면이 알아서 위로 부드럽게 스크롤됩니다. 손으로 터치하지 마세요.</p>
-        <p><b class="text-indigo-300">3. 정확한 완독 기준:</b> 각 화면의 필수 키워드를 80% 이상 정확히 발음해야 다음 화면으로 자동 전환됩니다.</p>
-        <p><b class="text-rose-400">4. 핵심 감점 멘트 금지:</b> '매장에서 대신 변경해 드리겠다' 또는 '자동 변경 처리하겠다'는 절대 금지(-5점 감점)입니다.</p>
-      </div>
-      <button onclick="closeGuideModal()" class="w-full bg-gray-800 hover:bg-gray-700 text-white font-semibold py-2.5 rounded-xl text-xs">
-        확인 완료
-      </button>
-    </div>
-  </div>
-
   <!-- 성공 전환 피드백 사운드 -->
   <audio id="successSfx" src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" preload="auto"></audio>
 
   <!-- ================= JAVASCRIPT ================= -->
   <script>
-    // 26.4Q 체크리스트 원본 100% 매칭 데이터
+    // 26.4Q 체크리스트 기준 데이터 및 유연한 완독 판정 설정
     const CHECKLIST_DATA = [
       {
         id: 0,
         stageName: "STAGE 0",
         title: "원테이크 본인확인",
         score: "필수 확인",
-        penalty: "촬영일/매장코드/매장명/T크루명을 순서대로 명확히 발화하지 않으면 영상 접수가 반려될 수 있습니다.",
-        // 엄격한 완독 판정을 위한 키워드 풀
-        keywords: ["촬영일", "매장코드", "매장명", "크루", "평가", "시작합니다"],
+        penalty: "촬영일/매장코드/매장명/T크루명을 순서대로 명확히 발화해야 합니다.",
+        // 중간 키워드들
+        keywords: ["촬영일", "매장코드", "매장명", "크루", "평가"],
+        // 대본 맨 끝 종결 키워드 후보 (이 중 1개 이상 발화되어야 통과)
+        tailKeywords: ["시작하겠습니다", "시작합니다", "평가시작", "시작"],
         template: "촬영일 {date}, 매장코드 {shopCode}, 매장명 {shopName}, T크루 {name} 롤플레잉 평가 시작하겠습니다."
       },
       {
@@ -244,7 +215,8 @@
         title: "1-1 & 1-3. 맞이인사 및 내방목적 확인",
         score: "배점 15점",
         penalty: "눈맞춤·기립 인사 실시 필수. 매장명을 명확히 밝히고 고객의 업무 목적을 먼저 질문해야 합니다.",
-        keywords: ["반갑습니다", "{shopName}", "오늘", "어떤", "업무", "도와드릴까요"],
+        keywords: ["반갑습니다", "{shopName}", "오늘", "어떤", "업무"],
+        tailKeywords: ["도와드릴까요", "도와드릴", "드릴까요", "어떤업무"],
         template: "반갑습니다! {shopName}입니다. 고객님, 오늘 어떤 업무 도와드릴까요?"
       },
       {
@@ -253,7 +225,8 @@
         title: "2-1. 5G 베스트 Max/Pro 4대 특장점 안내",
         score: "배점 30점",
         penalty: "4대 혜택(데이터 완전무제한, 전용혜택 1종, 스마트기기 2회선 요금무료, VIP)을 빠짐없이 명시해야 30점 만점 인정됩니다.",
-        keywords: ["베스트", "요금제", "완전", "무제한", "전용", "혜택", "스마트기기", "회선", "무료", "VIP"],
+        keywords: ["베스트", "요금제", "무제한", "우주패스", "스마트기기", "무료", "VIP"],
+        tailKeywords: ["제공됩니다", "누리실수", "혜택까지", "모두누리실"],
         template: "고객님께 가장 적합한 5G 베스트 요금제를 안내해 드리겠습니다. 첫째, 데이터는 속도 제한 없이 완전 무제한이며, 둘째, 우주패스나 OTT 등 전용 혜택 중 원하시는 1종이 무료 제공됩니다. 셋째, 워치나 태블릿 등 스마트기기 2회선 이용료가 무료이고, 넷째, T멤버십 최고 등급인 VIP 혜택까지 기본으로 모두 누리실 수 있습니다."
       },
       {
@@ -262,7 +235,8 @@
         title: "2-2 & 2-3. 요금제 재설계 안내 (실사용 기반)",
         score: "배점 5점 (-5점 감점 방지)",
         penalty: "⚠ '매장에서 대신 변경/자동 변경 처리해 드린다'는 약속 표현은 -5점 감점됩니다. 매장 연락/방문 또는 직접 변경을 유도하세요.",
-        keywords: ["6개월", "이용", "매장", "연락", "방문", "패턴", "분석", "재설계"],
+        keywords: ["6개월", "이용", "매장", "연락", "방문", "패턴", "분석"],
+        tailKeywords: ["재설계", "재설계해", "드릴게요", "해드리겠습니다"],
         template: "제가 권해드린 요금제로 6개월 동안 충분히 이용해 보신 후, 저희 매장으로 연락 주시거나 방문해 주시면 실제 사용하신 데이터와 혜택 패턴을 분석하여 고객님께 꼭 맞게 재설계해 드리겠습니다."
       },
       {
@@ -272,6 +246,7 @@
         score: "배점 10점",
         penalty: "SKT 제휴카드/T안심보상 안내 및 단순 온가족이 아닌 인터넷+Btv 유무선 결합 할인 특장점을 명시해야 합니다.",
         keywords: ["제휴카드", "기기값", "할인", "요즘가족결합", "인터넷", "Btv"],
+        tailKeywords: ["받으실수있습니다", "챙기실수있습니다", "있습니다", "할인혜택"],
         template: "추가로 SKT 제휴카드를 함께 활용하시면 기기값 추가 할인을 받으실 수 있습니다. 또한 가족분들이 SKT를 이용 중이시라면 요즘가족결합으로 기가인터넷과 Btv를 결합하여 매월 최대 통신비 할인 혜택을 챙기실 수 있습니다."
       },
       {
@@ -280,20 +255,22 @@
         title: "4-1 & 4-2. 배웅인사 및 추가 질문 확인",
         score: "배점 10점",
         penalty: "상담내용 요약 정리, MMS 전송 안내, '더 궁금하신 점' 확인 멘트 및 단답형이 아닌 정중한 재방문 권유 인사가 필수입니다.",
-        keywords: ["요약", "문자", "전송", "궁금하신", "연락", "좋은", "하루"],
+        keywords: ["요약", "문자", "전송", "궁금하신", "연락", "좋은하루"],
+        tailKeywords: ["되십시오", "좋은하루", "편하게연락", "감사합니다"],
         template: "오늘 안내해 드린 요금제와 결합 할인 요약 내용은 문자로 꼼꼼히 전송해 드리겠습니다. 혹시 더 궁금하신 점은 없으실까요? 문의사항이 있으시면 언제든 편하게 매장으로 연락 주십시오. 좋은 하루 되십시오!"
       }
     ];
 
-    // 상태 관리 변수
     let currentStep = 0;
     let baseFontSize = 26;
     let recognition = null;
     let userProfile = { date: '', shopCode: '', shopName: '', name: '' };
+    
+    // 음성 누적 상태
+    let accumulatedTranscript = '';
     let recognizedKeywords = new Set();
     let isTransitioning = false;
 
-    // 초기화
     window.addEventListener('DOMContentLoaded', () => {
       const today = new Date();
       const yyyy = today.getFullYear();
@@ -316,25 +293,22 @@
       startSpeechEngine();
     }
 
-    // 단계 렌더링
     function renderStep(stepIndex) {
       currentStep = stepIndex;
+      accumulatedTranscript = '';
       recognizedKeywords.clear();
       isTransitioning = false;
 
       const stage = CHECKLIST_DATA[currentStep];
 
-      // UI 헤더 및 뱃지 갱신
       document.getElementById('stageBadge').textContent = stage.stageName;
       document.getElementById('stageTitle').textContent = stage.title;
       document.getElementById('stageScore').textContent = stage.score;
       document.getElementById('penaltyText').textContent = stage.penalty;
 
-      // 프로그레스 바
       const progressPercent = ((currentStep) / (CHECKLIST_DATA.length - 1)) * 100;
       document.getElementById('progressBar').style.width = `${progressPercent}%`;
 
-      // 대본 텍스트 바인딩
       const rawText = stage.template
         .replace('{date}', userProfile.date)
         .replace('{shopCode}', userProfile.shopCode)
@@ -343,15 +317,12 @@
 
       document.getElementById('scriptContent').textContent = rawText;
 
-      // 뷰포트 스크롤 최상단 리셋
       const viewport = document.getElementById('prompterViewport');
       viewport.scrollTop = 0;
 
-      // 키워드 목록 바인딩
       refreshKeywordChips();
     }
 
-    // 키워드 뱃지 및 완독률 갱신
     function refreshKeywordChips() {
       const stage = CHECKLIST_DATA[currentStep];
       const container = document.getElementById('keywordBadgeList');
@@ -360,7 +331,6 @@
       let matchedCount = 0;
 
       stage.keywords.forEach(kw => {
-        // 동적 매장명 치환
         const targetKw = kw.replace('{shopName}', userProfile.shopName);
         const isMatched = recognizedKeywords.has(targetKw);
         if (isMatched) matchedCount++;
@@ -375,33 +345,22 @@
         container.appendChild(badge);
       });
 
-      // 완독률 계산
       const totalCount = stage.keywords.length;
-      const accuracyPercent = Math.round((matchedCount / totalCount) * 100);
       document.getElementById('keywordCount').textContent = `(${matchedCount} / ${totalCount})`;
-      document.getElementById('accuracyBadge').textContent = `완독률: ${accuracyPercent}%`;
-
-      // [핵심 기능 2] 모바일 자동 부드러운 스크롤
-      triggerAutoScroll(matchedCount, totalCount);
-
-      // [핵심 기능 1] 80% 이상 정확히 완독했을 때만 다음으로 자동 전환
-      const threshold = Math.ceil(totalCount * 0.8);
-      if (matchedCount >= threshold && !isTransitioning) {
-        completeCurrentStep();
-      }
+      
+      const percent = Math.min(100, Math.round((matchedCount / totalCount) * 100));
+      document.getElementById('accuracyBadge').textContent = `진행률: ${percent}%`;
     }
 
-    // 읽는 위치에 맞춰 하단 대본을 부드럽게 위로 올리는 스크롤 알고리즘
-    function triggerAutoScroll(matched, total) {
-      if (total === 0) return;
+    // 부드러운 자동 스크롤
+    function triggerAutoScroll(progressRatio) {
       const viewport = document.getElementById('prompterViewport');
       const maxScroll = viewport.scrollHeight - viewport.clientHeight;
       if (maxScroll <= 0) return;
 
-      const progress = matched / total;
-      // 35% 이상 발화했을 때부터 비례하여 아래쪽 대본을 자연스럽게 올림
-      if (progress >= 0.35) {
-        const targetY = maxScroll * Math.min(1, (progress - 0.2) / 0.8);
+      // 30% 이상 말했을 때부터 점진적으로 아래쪽 대본을 화면 위로 스크롤
+      if (progressRatio >= 0.3) {
+        const targetY = maxScroll * Math.min(1, (progressRatio - 0.2) / 0.7);
         viewport.scrollTo({
           top: targetY,
           behavior: 'smooth'
@@ -409,48 +368,82 @@
       }
     }
 
-    // 다음 단계 전환 트리거
+    // 스마트 완독 판정 로직
+    function evaluateCompletion(fullSpokenText) {
+      if (isTransitioning) return;
+
+      const stage = CHECKLIST_DATA[currentStep];
+      const cleanSpoken = fullSpokenText.replace(/\s+/g, '');
+      const cleanTemplate = stage.template.replace(/\s+/g, '');
+
+      // 1. 중간 키워드 매칭 (띄어쓰기 무시 부분 일치)
+      stage.keywords.forEach(kw => {
+        const targetKw = kw.replace('{shopName}', userProfile.shopName);
+        const cleanKw = targetKw.replace(/\s+/g, '');
+        if (cleanSpoken.includes(cleanKw)) {
+          recognizedKeywords.add(targetKw);
+        }
+      });
+      refreshKeywordChips();
+
+      // 2. 발화 진도율 계산 (누적 글자 수 및 키워드 비율 기반)
+      const keywordRatio = recognizedKeywords.size / stage.keywords.length;
+      const lengthRatio = cleanSpoken.length / cleanTemplate.length;
+      const estimatedProgress = Math.max(keywordRatio, Math.min(1, lengthRatio));
+      
+      // 스크롤 동기화
+      triggerAutoScroll(estimatedProgress);
+
+      // 3. '문장 끝 마무리 어휘' 발화 여부 체크
+      const saidTail = stage.tailKeywords.some(tail => cleanSpoken.includes(tail.replace(/\s+/g, '')));
+
+      // ★ 완독 최종 승인 조건:
+      // (1) 대본의 45% 이상 분량을 실제로 소리 내어 말했고
+      // (2) 중간 키워드를 절반(50%) 이상 언급했으며
+      // (3) 대본 맨 끝 종결 멘트를 말했다면 즉시 다음으로 자동 전환!
+      if (lengthRatio >= 0.45 && keywordRatio >= 0.5 && saidTail) {
+        completeCurrentStep();
+      }
+    }
+
     function completeCurrentStep() {
       isTransitioning = true;
       
-      // 통과 피드백 사운드
       try {
         const audio = document.getElementById('successSfx');
         audio.currentTime = 0;
         audio.play().catch(() => {});
       } catch (e) {}
 
-      document.getElementById('statusNotice').textContent = "✔ 완독 인증 완료! 다음 단계로 이동합니다";
+      document.getElementById('statusNotice').textContent = "✔ 완독 확인! 다음 단계로 넘어갑니다";
       document.getElementById('statusNotice').className = "text-[11px] text-emerald-400 font-bold";
 
       setTimeout(() => {
-        document.getElementById('statusNotice').textContent = "대본을 80% 이상 정확히 완독해야 넘어갑니다";
-        document.getElementById('statusNotice').className = "text-[11px] text-gray-400 font-medium";
+        document.getElementById('statusNotice').textContent = "마지막 문장까지 끝까지 읽으면 자동으로 넘어갑니다";
+        document.getElementById('statusNotice').className = "text-[11px] text-yellow-400/90 font-medium";
 
         if (currentStep < CHECKLIST_DATA.length - 1) {
           renderStep(currentStep + 1);
         } else {
-          alert("🎉 축하합니다! 26.4Q AI 롤플레잉 전 항목 완독을 완료했습니다.");
+          alert("🎉 축하합니다! 26.4Q AI 롤플레잉 전 대본 완독을 마쳤습니다.");
         }
-      }, 750);
+      }, 700);
     }
 
-    // 수동 내비게이션
     function prevStep() {
       if (currentStep > 0) renderStep(currentStep - 1);
     }
-    function nextStep() {
+    function forceNextStep() {
       if (currentStep < CHECKLIST_DATA.length - 1) renderStep(currentStep + 1);
     }
 
-    // 폰트 크기 변경
     function adjustFontSize(delta) {
       baseFontSize = Math.min(42, Math.max(18, baseFontSize + delta));
       document.getElementById('scriptContent').style.fontSize = `${baseFontSize}px`;
       document.getElementById('fontSizeDisplay').textContent = `${baseFontSize}px`;
     }
 
-    // Web Speech API 엔진 구동
+    // Web Speech API 구동
     function startSpeechEngine() {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechRecognition) {
@@ -471,59 +464,46 @@
 
       recognition.onerror = (e) => {
         if (e.error !== 'no-speech') {
-          console.warn("Speech API Notice:", e.error);
+          console.warn("STT Notice:", e.error);
         }
       };
 
       recognition.onend = () => {
-        // 촬영 도중 마이크가 끊기지 않도록 영구 재시작
         if (recognition) {
           try { recognition.start(); } catch(e) {}
         }
       };
 
       recognition.onresult = (event) => {
-        let transcript = '';
+        let currentInterim = '';
         for (let i = event.resultIndex; i < event.results.length; ++i) {
-          transcript += event.results[i][0].transcript;
+          const piece = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            accumulatedTranscript += ' ' + piece;
+          } else {
+            currentInterim += piece;
+          }
         }
 
-        if (!transcript.trim()) return;
+        const fullSpoken = (accumulatedTranscript + ' ' + currentInterim).trim();
+        if (!fullSpoken) return;
 
-        document.getElementById('liveSttText').textContent = transcript;
-
-        // 공백 제거 정규화 매칭
-        const normalizedSpeech = transcript.replace(/\s+/g, '');
-        const stage = CHECKLIST_DATA[currentStep];
-
-        stage.keywords.forEach(kw => {
-          const targetKw = kw.replace('{shopName}', userProfile.shopName);
-          const normalizedKw = targetKw.replace(/\s+/g, '');
-
-          if (normalizedSpeech.includes(normalizedKw)) {
-            recognizedKeywords.add(targetKw);
-          }
-        });
-
-        refreshKeywordChips();
+        document.getElementById('liveSttText').textContent = fullSpoken;
+        evaluateCompletion(fullSpoken);
       };
 
       try {
         recognition.start();
       } catch (err) {
-        console.error("Mic Start Error:", err);
+        console.error("Mic start err:", err);
       }
     }
-
-    // 모달 제어
-    function openGuideModal() { document.getElementById('guideModal').classList.remove('hidden'); }
-    function closeGuideModal() { document.getElementById('guideModal').classList.add('hidden'); }
 
     // PC 키보드 단축키
     window.addEventListener('keydown', (e) => {
       if (e.key === 'ArrowRight' || e.key === ' ') {
         e.preventDefault();
-        nextStep();
+        forceNextStep();
       } else if (e.key === 'ArrowLeft') {
         prevStep();
       }
