@@ -52,9 +52,9 @@
         <span id="micStatusText" class="text-xs font-bold text-gray-200">음성인식 대기</span>
       </div>
       <div class="hidden sm:flex items-center gap-1.5 text-xs text-gray-400">
-        <span class="text-indigo-400 font-semibold" id="headerShopInfo">심곡대리점 본점</span>
+        <span class="text-indigo-400 font-semibold" id="headerShopInfo">알피대리점 본점</span>
         <span>•</span>
-        <span id="headerCrewInfo">장홍찬 매니저</span>
+        <span id="headerCrewInfo">김알피 매니저</span>
       </div>
     </div>
 
@@ -136,15 +136,15 @@
         </div>
         <div>
           <label class="block text-xs font-bold text-gray-300 mb-1">매장코드</label>
-          <input type="text" id="inputShopCode" value="D140330000" class="w-full bg-gray-950 border border-gray-800 rounded-xl px-3.5 py-2.5 text-white font-medium focus:border-indigo-500 outline-none">
+          <input type="text" id="inputShopCode" value="D123450000" class="w-full bg-gray-950 border border-gray-800 rounded-xl px-3.5 py-2.5 text-white font-medium focus:border-indigo-500 outline-none">
         </div>
         <div>
           <label class="block text-xs font-bold text-gray-300 mb-1">매장명</label>
-          <input type="text" id="inputShopName" value="심곡대리점 본점" class="w-full bg-gray-950 border border-gray-800 rounded-xl px-3.5 py-2.5 text-white font-medium focus:border-indigo-500 outline-none">
+          <input type="text" id="inputShopName" value="알피대리점 본점" class="w-full bg-gray-950 border border-gray-800 rounded-xl px-3.5 py-2.5 text-white font-medium focus:border-indigo-500 outline-none">
         </div>
         <div>
           <label class="block text-xs font-bold text-gray-300 mb-1">T크루 성함</label>
-          <input type="text" id="inputCrewName" value="장홍찬 매니저" class="w-full bg-gray-950 border border-gray-800 rounded-xl px-3.5 py-2.5 text-white font-medium focus:border-indigo-500 outline-none">
+          <input type="text" id="inputCrewName" value="김알피 매니저" class="w-full bg-gray-950 border border-gray-800 rounded-xl px-3.5 py-2.5 text-white font-medium focus:border-indigo-500 outline-none">
         </div>
       </div>
 
@@ -233,19 +233,29 @@
     let isSpeechEngineRunning = false;
     let lastProcessedIndex = 0; // 이전 페이지 음성 이벤트 찌꺼기 무시용 기준 인덱스
 
-    window.addEventListener('DOMContentLoaded', () => {
+    function setTodayDate() {
       const today = new Date();
       const yyyy = today.getFullYear();
       const mm = String(today.getMonth() + 1).padStart(2, '0');
       const dd = String(today.getDate()).padStart(2, '0');
-      document.getElementById('inputDate').value = `${yyyy}-${mm}-${dd}`;
-    });
+      const targetInput = document.getElementById('inputDate');
+      if (targetInput) {
+        targetInput.value = `${yyyy}-${mm}-${dd}`;
+      }
+    }
+    // DOM 로드 즉시 실행 및 혹시 늦게 로드될 경우 대비
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', setTodayDate);
+    } else {
+      setTodayDate();
+    }
 
     function finishSetup() {
-      userProfile.date = document.getElementById('inputDate').value.trim() || '2026-11-05';
-      userProfile.shopCode = document.getElementById('inputShopCode').value.trim() || 'D140330000';
-      userProfile.shopName = document.getElementById('inputShopName').value.trim() || '심곡대리점 본점';
-      userProfile.name = document.getElementById('inputCrewName').value.trim() || '장홍찬 매니저';
+      const todayStr = new Date().toISOString().split('T')[0];
+      userProfile.date = (document.getElementById('inputDate').value.trim()) || todayStr;
+      userProfile.shopCode = document.getElementById('inputShopCode').value.trim() || 'D23450000';
+      userProfile.shopName = document.getElementById('inputShopName').value.trim() || '알피대리점 본점';
+      userProfile.name = document.getElementById('inputCrewName').value.trim() || '김알피 매니저';
 
       document.getElementById('headerShopInfo').textContent = userProfile.shopName;
       document.getElementById('headerCrewInfo').textContent = userProfile.name;
@@ -262,15 +272,10 @@
       recognizedKeywords.clear();
       isTransitioning = false;
 
-      // 이전 단계에서 들어온 누적 이벤트 인덱스 컷오프
-      if (recognition && recognition.results) {
-        lastProcessedIndex = recognition.results.length;
-      }
+      // STT 이전 이벤트 찌꺼기 컷오프
+      lastProcessedIndex = 999999;
 
-      const liveTextEl = document.getElementById('liveSttText');
-      if (liveTextEl) liveTextEl.textContent = "새 멘트를 읽어주세요...";
-
-      // STT 세션을 강제 종료하지 않고 화면 UI 텍스트만 비워줍니다.
+      // 화면 하단 인식 텍스트 초기화
       const liveTextEl = document.getElementById('liveSttText');
       if (liveTextEl) liveTextEl.textContent = "새 멘트를 읽어주세요...";
 
