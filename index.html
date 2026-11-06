@@ -254,19 +254,16 @@
       startSpeechEngine();
     }
 
-    // 단계 전환 (마이크는 끄지 않고 버퍼만 리셋)
+    // 단계 전환 (마이크 연결은 절대 끊지 않고 텍스트 버퍼 및 UI만 초기화)
     function renderStep(stepIndex) {
       currentStep = stepIndex;
-      accumulatedTranscript = ''; // 음성 버퍼 초기화
+      accumulatedTranscript = ''; // 이전 페이지 음성 누적치 초기화
       recognizedKeywords.clear();
       isTransitioning = false;
 
-      // 2페이지 이후 STT 누적 꼬임 방지: 이전 인식 세션을 깔끔하게 리셋
-      if (recognition && isSpeechEngineRunning) {
-        try {
-          recognition.abort();
-        } catch(e) {}
-      }
+      // STT 세션을 강제 종료하지 않고 화면 UI 텍스트만 비워줍니다.
+      const liveTextEl = document.getElementById('liveSttText');
+      if (liveTextEl) liveTextEl.textContent = "새 멘트를 읽어주세요...";
 
       const stage = CHECKLIST_DATA[currentStep];
 
@@ -337,34 +334,38 @@
       }
     }
 
-    // 완독 검증: 문장 종결 + 중간 키워드 매칭
+    // 완독 검증: 문장 종결 + 중간 키워드 매칭 (유연한 인식 적용)
     function evaluateCompletion(fullSpokenText) {
       if (isTransitioning) return;
 
       const stage = CHECKLIST_DATA[currentStep];
-      const cleanSpoken = fullSpokenText.replace(/\s+/g, '');
-      const cleanTemplate = stage.template.replace(/\s+/g, '');
+      // 특수문자 및 띄어쓰기 전부 제거하여 비교
+      const cleanSpoken = fullSpokenText.replace(/[^가-힣0-9a-zA-Z]/g, '');
+      const cleanTemplate = stage.template.replace(/[^가-힣0-9a-zA-Z]/g, '');
 
       stage.keywords.forEach(kw => {
         const targetKw = kw.replace('{shopName}', userProfile.shopName);
-        const cleanKw = targetKw.replace(/\s+/g, '');
+        const cleanKw = targetKw.replace(/[^가-힣0-9a-zA-Z]/g, '');
         if (cleanSpoken.includes(cleanKw)) {
           recognizedKeywords.add(targetKw);
         }
       });
       refreshKeywordChips();
 
-      const keywordRatio = recognizedKeywords.size / stage.keywords.length;
-      const lengthRatio = cleanSpoken.length / cleanTemplate.length;
+      const keywordRatio = stage.keywords.length > 0 ? (recognizedKeywords.size / stage.keywords.length) : 1;
+      const lengthRatio = cleanTemplate.length > 0 ? (cleanSpoken.length / cleanTemplate.length) : 1;
       const estimatedProgress = Math.max(keywordRatio, Math.min(1, lengthRatio));
       
       triggerAutoScroll(estimatedProgress);
 
-      // 종결 멘트 확인
-      const saidTail = stage.tailKeywords.some(tail => cleanSpoken.includes(tail.replace(/\s+/g, '')));
+      // 종결 멘트 확인 (꼬리 어미를 부드럽게 감지)
+      const saidTail = stage.tailKeywords.some(tail => {
+        const cleanTail = tail.replace(/[^가-힣0-9a-zA-Z]/g, '');
+        return cleanSpoken.includes(cleanTail);
+      });
 
-      // 통과 조건: 35% 이상 발화 + 키워드 40% 이상 + 종결 멘트 감지
-      if (lengthRatio >= 0.35 && keywordRatio >= 0.4 && saidTail) {
+      // 통과 조건 완화: 30% 이상 발화되고 종결어미를 말했거나, 키워드를 절반 이상 읽었을 때 통과
+      if ((lengthRatio >= 0.25 && saidTail) || (keywordRatio >= 0.6 && saidTail) || (lengthRatio >= 0.85)) {
         completeCurrentStep();
       }
     }
