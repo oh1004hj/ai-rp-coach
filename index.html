@@ -484,6 +484,10 @@
 
     // 설정 화면 매장명 입력란 안내: 한글 입력 권장 + 예시
     function setupShopNameHint() {
+      // 매장코드 입력칸 기본값 교체
+      const codeInput = document.getElementById('inputShopCode');
+      if (codeInput && codeInput.value.trim() === 'D123450000') codeInput.value = 'D140330000';
+
       const input = document.getElementById('inputShopName');
       if (!input) return;
       const label = input.previousElementSibling;
@@ -491,6 +495,7 @@
         label.innerHTML = '매장명 <span class="text-yellow-400 font-semibold">(한글로 작성하세요! 예: 유엔아이대리점 송도아울렛점)</span>';
       }
       input.placeholder = '예: 유엔아이대리점 송도아울렛점';
+      if (input.value.trim() === '알피대리점 본점') input.value = '심곡대리점 본점';
     }
     setupShopNameHint();
 
@@ -500,10 +505,10 @@
       if (!input) return;
       const label = input.previousElementSibling;
       if (label && label.tagName === 'LABEL') {
-        label.innerHTML = 'T크루 성함 <span class="text-yellow-400 font-semibold">(이름만 입력하세요! 예: 김알피)</span>';
+        label.innerHTML = 'T크루 성함 <span class="text-yellow-400 font-semibold">(이름만 입력하세요! 예: 장홍찬)</span>';
       }
-      input.placeholder = '예: 김알피';
-      if (input.value.trim() === '김알피 매니저') input.value = '김알피';
+      input.placeholder = '예: 장홍찬';
+      if (['김알피 매니저', '김알피'].includes(input.value.trim())) input.value = '장홍찬';
     }
     setupCrewNameHint();
 
@@ -515,9 +520,9 @@
       const fallbackDate = `${yyyy}-${mm}-${dd}`;
 
       userProfile.date = (document.getElementById('inputDate').value.trim()) || fallbackDate;
-      userProfile.shopCode = document.getElementById('inputShopCode').value.trim() || 'D123450000';
-      userProfile.shopName = document.getElementById('inputShopName').value.trim() || '알피대리점 본점';
-      userProfile.name = document.getElementById('inputCrewName').value.trim() || '김알피';
+      userProfile.shopCode = document.getElementById('inputShopCode').value.trim() || 'D140330000';
+      userProfile.shopName = document.getElementById('inputShopName').value.trim() || '심곡대리점 본점';
+      userProfile.name = document.getElementById('inputCrewName').value.trim() || '장홍찬';
 
       document.getElementById('headerShopInfo').textContent = userProfile.shopName;
       document.getElementById('headerCrewInfo').textContent = userProfile.name;
