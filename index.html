@@ -164,7 +164,7 @@
         title: "원테이크 본인확인",
         score: "필수 확인",
         penalty: "촬영일/매장코드/매장명/T크루명을 순서대로 명확히 발화해야 합니다.",
-        keywords: ["촬영일", "매장코드", "매장명", "롤플레잉", "평가"],
+        keywords: ["촬영일", "매장코드", "매장명", "T크루명"],
         tailKeywords: ["시작하겠습니다", "시작합니다"],
         template: "촬영일 {date}, 매장코드 {shopCode}, 매장명 {shopName}, T크루 {name} 롤플레잉 평가 시작하겠습니다."
       },
@@ -239,6 +239,9 @@
     let restartTimer = null;
     let transitionTimer = null;
     let micPermissionBlocked = false;
+    let lastFinalIndex = -1;        // 마지막으로 확정된 문장 번호
+    let nextStageBoundary = null;   // 자동 넘김 시 다음 페이지가 시작될 문장 번호
+    let lastResultEvent = null;     // 전환 중 들어온 음성 결과를 다시 읽기 위해 보관
     const MIN_STAGE_TIME_MS = 2000;
 
     const normalizeSpeech = text => String(text || '')
@@ -257,15 +260,139 @@
       'VIP': ['vip', '브이아이피']
     };
 
+    // 영문 알파벳을 한글 발음으로 변환 (RP → 알피, btv → 비티브이)
+    const LETTER_READINGS = {
+      a: '에이', b: '비', c: '씨', d: '디', e: '이', f: '에프', g: '지',
+      h: '에이치', i: '아이', j: '제이', k: '케이', l: '엘', m: '엠', n: '엔',
+      o: '오', p: '피', q: '큐', r: '알', s: '에스', t: '티', u: '유',
+      v: '브이', w: '더블유', x: '엑스', y: '와이', z: '지'
+    };
+    function toPhonetic(text) {
+      return normalizeSpeech(text).replace(/[a-z]/g, ch => LETTER_READINGS[ch] || ch);
+    }
+
+    // 두 문자열이 몇 글자 다른지 계산 (추가/삭제/변경 1회 = 1)
+    function editDistance(a, b) {
+      const dp = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+      for (let j = 1; j <= b.length; j++) dp[0][j] = j;
+      for (let i = 1; i <= a.length; i++) {
+        for (let j = 1; j <= b.length; j++) {
+          dp[i][j] = Math.min(
+            dp[i - 1][j] + 1,
+            dp[i][j - 1] + 1,
+            dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+          );
+        }
+      }
+      return dp[a.length][b.length];
+    }
+
+    // 매장코드: 발화 속 숫자 덩어리가 실제 코드와 1자리 이내로 다르면 인정
+    function shopCodeFuzzyMatch(spoken) {
+      const digits = String(userProfile.shopCode || '').replace(/[^0-9]/g, '');
+      if (digits.length < 6) return false; // 짧은 코드는 오인식 위험이 있어 제외
+      const runs = spoken.match(/[0-9]+/g) || [];
+      return runs.some(run =>
+        Math.abs(run.length - digits.length) <= 1 && editDistance(run, digits) <= 1
+      );
+    }
+
+    // text 안에 pattern과 비슷한 부분이 있는지 확인 (maxErr 글자까지 다름 허용)
+    function fuzzyContains(text, pattern, maxErr) {
+      if (!pattern) return false;
+      if (text.includes(pattern)) return true;
+      let prev = new Array(text.length + 1).fill(0); // 시작 위치 자유
+      for (let i = 1; i <= pattern.length; i++) {
+        const cur = [i];
+        for (let j = 1; j <= text.length; j++) {
+          cur[j] = Math.min(
+            prev[j] + 1,
+            cur[j - 1] + 1,
+            prev[j - 1] + (pattern[i - 1] === text[j - 1] ? 0 : 1)
+          );
+        }
+        prev = cur;
+      }
+      return Math.min(...prev) <= maxErr;
+    }
+
+    // 날짜 입력값(예: 2026-11-09)을 STT가 받아 적을 수 있는 형태로 변환
+    function buildDateVariants(dateStr) {
+      const d = String(dateStr || '').replace(/[^0-9]/g, '');
+      if (d.length !== 8) return [dateStr];
+      const y = d.slice(0, 4), m = d.slice(4, 6), dd = d.slice(6, 8);
+      const mi = String(Number(m)), di = String(Number(dd));
+      return [
+        d,                          // 20261109
+        `${y}년${mi}월${di}일`,      // 2026년11월9일
+        `${mi}월${di}일`,            // 11월9일
+        `${m}월${dd}일`,             // 11월09일
+        `${mi}월${di}`               // 11월9 ('일' 누락 대비)
+      ];
+    }
+
+    // 숫자를 한 자리씩 읽었을 때 STT가 한글로 적는 경우 대비 (0 → 공/영)
+    function buildDigitReadings(digits) {
+      const base = ['', '일', '이', '삼', '사', '오', '육', '칠', '팔', '구'];
+      const toKor = zero => digits.split('').map(n => n === '0' ? zero : base[Number(n)]).join('');
+      return [toKor('공'), toKor('영')];
+    }
+
+    // 값 기반 키워드: 라벨이 아니라 실제 입력값이 발화됐는지로만 판정
+    function getValueVariants(keyword) {
+      switch (keyword) {
+        case '촬영일':
+          return buildDateVariants(userProfile.date);
+        case '매장코드': {
+          const code = String(userProfile.shopCode || '');
+          const digits = code.replace(/[^0-9]/g, '');
+          return digits.length >= 4
+            ? [code, digits, ...buildDigitReadings(digits)]
+            : [code];
+        }
+        case '매장명':
+          return [userProfile.shopName];
+        case 'T크루명': {
+          const firstWord = String(userProfile.name || '').trim().split(/\s+/)[0];
+          return [userProfile.name, firstWord];
+        }
+        default:
+          return null; // 값 기반 키워드가 아님
+      }
+    }
+
     function hasKeyword(spoken, keyword) {
       const target = keyword.replace('{shopName}', userProfile.shopName);
-      const variants = KEYWORD_ALIASES[target] || [target];
-      return variants.some(value => spoken.includes(normalizeSpeech(value)));
+      // 매장코드는 숫자 1자리 오차까지 허용
+      if (target === '매장코드' && shopCodeFuzzyMatch(spoken)) return true;
+
+      const valueVariants = getValueVariants(target);
+      // 값 기반 키워드는 실제 값만, 그 외 키워드는 기존 별칭 방식 유지
+      const variants = valueVariants || KEYWORD_ALIASES[target] || [target];
+      const spokenPhonetic = toPhonetic(spoken);
+      const exact = variants.some(value => {
+        const v = normalizeSpeech(value);
+        if (!v) return false;
+        // 원문 그대로 일치하거나, 영문을 한글 발음으로 바꿔서 일치하면 인정
+        return spoken.includes(v) || spokenPhonetic.includes(toPhonetic(v));
+      });
+      if (exact) return true;
+
+      // 매장명·T크루명(STAGE 1의 매장명 포함)은 6글자당 1글자 오차 허용 (앤/엔, 애/에 등)
+      const isNameLike = target === '매장명' || target === 'T크루명' || target === userProfile.shopName;
+      if (isNameLike) {
+        const base = target === 'T크루명' ? userProfile.name
+                   : userProfile.shopName;
+        const v = toPhonetic(base);
+        const maxErr = Math.floor(v.length / 6);
+        if (maxErr > 0 && fuzzyContains(spokenPhonetic, v, maxErr)) return true;
+      }
+      return false;
     }
 
     // 단순 글자 수만으로 자동 넘김하지 않음. 단계별 핵심 발화가 모두 필요함.
     const REQUIRED_GROUPS = {
-      0: [['촬영일'], ['매장코드'], ['매장명'], ['롤플레잉'], ['평가']],
+      0: [['촬영일'], ['매장코드'], ['매장명'], ['T크루명']],
       1: [['반갑습니다'], ['{shopName}'], ['오늘'], ['어떤'], ['업무'], ['도와드릴까요', '드릴까요']],
       2: [['베스트'], ['완전무제한'], ['우주패스', '전용혜택'], ['스마트기기'], ['무료'], ['VIP']],
       3: [['6개월'], ['이용'], ['매장'], ['연락', '방문'], ['패턴분석'], ['재설계']],
@@ -281,21 +408,82 @@
       5: ['좋은하루되십시오', '좋은하루되세요']
     };
 
-    function setTodayDate() {
+    // 촬영일자 칸에 오늘 날짜 채우기 (force=true면 기존 값이 있어도 덮어씀)
+    function setTodayDate(force = false) {
       const today = new Date();
       const yyyy = today.getFullYear();
       const mm = String(today.getMonth() + 1).padStart(2, '0');
       const dd = String(today.getDate()).padStart(2, '0');
+      const todayStr = `${yyyy}-${mm}-${dd}`;
       const targetInput = document.getElementById('inputDate');
-      if (targetInput) {
-        targetInput.value = `${yyyy}-${mm}-${dd}`;
+      if (!targetInput) return;
+      targetInput.placeholder = todayStr;
+      if (force || !targetInput.value.trim()) {
+        targetInput.value = todayStr;
       }
     }
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', setTodayDate);
-    } else {
-      setTodayDate();
+    // 페이지가 열릴 때 바로 실행 + 브라우저가 이전 입력 상태를 복원한 뒤에도 다시 확인
+    setTodayDate();
+    document.addEventListener('DOMContentLoaded', () => setTodayDate());
+    window.addEventListener('pageshow', () => setTodayDate());
+
+    // [다시 시작] 버튼: HTML 수정 없이 헤더 '이전' 버튼 앞에 동적으로 삽입
+    function createRestartButton() {
+      if (document.getElementById('restartBtn')) return;
+      const prevBtn = document.querySelector('button[onclick="prevStep()"]');
+      if (!prevBtn) return;
+      const btn = document.createElement('button');
+      btn.id = 'restartBtn';
+      btn.type = 'button';
+      btn.textContent = '다시 시작';
+      btn.className = 'hidden px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-lg border border-rose-500 active:scale-95';
+      btn.addEventListener('click', restartApp);
+      prevBtn.parentNode.insertBefore(btn, prevBtn);
     }
+
+    // 원테이크 재촬영: 입력 정보는 유지하고 1페이지(본인확인)부터 바로 다시 시작
+    function restartApp() {
+      if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
+      if (transitionTimer) { clearTimeout(transitionTimer); transitionTimer = null; }
+      isTransitioning = false;
+      micPermissionBlocked = false;
+      shouldBeRecognizing = true;
+
+      // 음성인식을 깨끗하게 새로 켜기 (끝나면 onend에서 자동 재시작)
+      if (recognition && isSpeechEngineRunning) {
+        try { recognition.abort(); } catch (e) {}
+      }
+      latestResultCount = 0;
+      renderStep(0);
+      if (!isSpeechEngineRunning) startSpeechEngine();
+    }
+
+    createRestartButton();
+
+    // 설정 화면 매장명 입력란 안내: 한글 입력 권장 + 예시
+    function setupShopNameHint() {
+      const input = document.getElementById('inputShopName');
+      if (!input) return;
+      const label = input.previousElementSibling;
+      if (label && label.tagName === 'LABEL') {
+        label.innerHTML = '매장명 <span class="text-yellow-400 font-semibold">(한글로 작성하세요! 예: 유엔아이대리점 송도아울렛점)</span>';
+      }
+      input.placeholder = '예: 유엔아이대리점 송도아울렛점';
+    }
+    setupShopNameHint();
+
+    // 설정 화면 T크루 성함 입력란: 이름만 입력하도록 안내 (직급 제외)
+    function setupCrewNameHint() {
+      const input = document.getElementById('inputCrewName');
+      if (!input) return;
+      const label = input.previousElementSibling;
+      if (label && label.tagName === 'LABEL') {
+        label.innerHTML = 'T크루 성함 <span class="text-yellow-400 font-semibold">(이름만 입력하세요! 예: 김알피)</span>';
+      }
+      input.placeholder = '예: 김알피';
+      if (input.value.trim() === '김알피 매니저') input.value = '김알피';
+    }
+    setupCrewNameHint();
 
     async function finishSetup() {
       const today = new Date();
@@ -307,7 +495,7 @@
       userProfile.date = (document.getElementById('inputDate').value.trim()) || fallbackDate;
       userProfile.shopCode = document.getElementById('inputShopCode').value.trim() || 'D123450000';
       userProfile.shopName = document.getElementById('inputShopName').value.trim() || '알피대리점 본점';
-      userProfile.name = document.getElementById('inputCrewName').value.trim() || '김알피 매니저';
+      userProfile.name = document.getElementById('inputCrewName').value.trim() || '김알피';
 
       document.getElementById('headerShopInfo').textContent = userProfile.shopName;
       document.getElementById('headerCrewInfo').textContent = userProfile.name;
@@ -334,8 +522,9 @@
       recognizedKeywords.clear();
       isTransitioning = false;
       stepStartTime = Date.now();
-      // 기존 음성인식 세션은 유지하고 이전 단계의 result 인덱스만 제외
-      resultBoundary = latestResultCount;
+      // 자동 넘김이면 넘김을 확정한 문장 바로 다음부터, 수동 넘김이면 지금까지 결과 이후부터 새 페이지로 인정
+      resultBoundary = (nextStageBoundary !== null) ? nextStageBoundary : latestResultCount;
+      nextStageBoundary = null;
       stageFinalTranscript = '';
       stageInterimTranscript = '';
       processedFinalResults.clear();
@@ -365,6 +554,9 @@
 
       const viewport = document.getElementById('prompterViewport');
       viewport.scrollTop = 0;
+
+      const restartBtn = document.getElementById('restartBtn');
+      if (restartBtn) restartBtn.classList.toggle('hidden', stepIndex !== 1);
 
       refreshKeywordChips();
     }
@@ -451,7 +643,9 @@
 
     function completeCurrentStep() {
       isTransitioning = true;
-      
+      // 넘김을 확정한 문장 다음 번호부터는 다음 페이지 발화로 처리
+      nextStageBoundary = lastFinalIndex + 1;
+
       try {
         const audio = document.getElementById('successSfx');
         audio.currentTime = 0;
@@ -468,10 +662,12 @@
 
         if (currentStep < CHECKLIST_DATA.length - 1) {
           renderStep(currentStep + 1);
+          // 전환 중에 이미 들어온 말("반갑습니다" 등)을 새 페이지에 바로 반영
+          if (lastResultEvent) handleSpeechResult(lastResultEvent);
         } else {
           alert("🎉 축하합니다! 26.4Q AI 롤플레잉 전 대본 완독을 마쳤습니다.");
         }
-      }, 700);
+      }, 400);
     }
 
     function prevStep() {
@@ -485,6 +681,36 @@
       baseFontSize = Math.min(42, Math.max(18, baseFontSize + delta));
       document.getElementById('scriptContent').style.fontSize = `${baseFontSize}px`;
       document.getElementById('fontSizeDisplay').textContent = `${baseFontSize}px`;
+    }
+
+
+    // 음성인식 결과 처리 (전환 직후 다시 호출할 수 있도록 함수로 분리)
+    function handleSpeechResult(event) {
+      latestResultCount = Math.max(latestResultCount, event.results.length);
+      lastResultEvent = event;
+      if (isTransitioning) return; // 전환 중에는 보관만 하고, 전환 끝나면 다시 읽음
+      let interim = '';
+      let addedFinal = false;
+      for (let i = resultBoundary; i < event.results.length; i++) {
+        const result = event.results[i];
+        const piece = result[0].transcript;
+        if (result.isFinal) {
+          if (!processedFinalResults.has(i)) {
+            processedFinalResults.add(i);
+            stageFinalTranscript += ' ' + piece;
+            lastFinalIndex = Math.max(lastFinalIndex, i);
+            addedFinal = true;
+          }
+        } else {
+          interim += ' ' + piece;
+        }
+      }
+      stageInterimTranscript = interim;
+      const spoken = (stageFinalTranscript + ' ' + stageInterimTranscript).trim();
+      if (!spoken) return;
+      document.getElementById('liveSttText').textContent = spoken;
+      evaluateCompletion(spoken, false);
+      if (addedFinal) evaluateCompletion(stageFinalTranscript, true);
     }
 
     function startSpeechEngine() {
@@ -505,6 +731,15 @@
 
         recognition.onstart = () => {
           isSpeechEngineRunning = true;
+          // 음성인식이 다시 켜지면 번호표가 0부터 새로 시작되므로 기억도 초기화
+          // (이 페이지에서 이미 인식된 문장은 그대로 유지)
+          latestResultCount = 0;
+          resultBoundary = 0;
+          processedFinalResults.clear();
+          stageInterimTranscript = '';
+          lastFinalIndex = -1;
+          nextStageBoundary = null;
+          lastResultEvent = null;
           document.getElementById('micStatusText').textContent = '실시간 음성인식 ON';
           document.getElementById('micDot').className = 'w-3 h-3 rounded-full bg-emerald-500 pulse-record';
         };
@@ -530,31 +765,7 @@
             document.getElementById('micDot').className = 'w-3 h-3 rounded-full bg-red-500';
           }
         };
-        recognition.onresult = event => {
-          latestResultCount = Math.max(latestResultCount, event.results.length);
-          if (isTransitioning) return;
-          let interim = '';
-          let addedFinal = false;
-          for (let i = resultBoundary; i < event.results.length; i++) {
-            const result = event.results[i];
-            const piece = result[0].transcript;
-            if (result.isFinal) {
-              if (!processedFinalResults.has(i)) {
-                processedFinalResults.add(i);
-                stageFinalTranscript += ' ' + piece;
-                addedFinal = true;
-              }
-            } else {
-              interim += ' ' + piece;
-            }
-          }
-          stageInterimTranscript = interim;
-          const spoken = (stageFinalTranscript + ' ' + stageInterimTranscript).trim();
-          if (!spoken) return;
-          document.getElementById('liveSttText').textContent = spoken;
-          evaluateCompletion(spoken, false);
-          if (addedFinal) evaluateCompletion(stageFinalTranscript, true);
-        };
+        recognition.onresult = handleSpeechResult;
       }
       try { recognition.start(); }
       catch (err) {
@@ -570,6 +781,12 @@
     }
 
     window.addEventListener('keydown', (e) => {
+      // 입력창에서 타이핑 중이거나 설정 화면이 열려 있으면 단축키 무시 (띄어쓰기·커서 이동 허용)
+      const tag = (e.target && e.target.tagName) || '';
+      const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || (e.target && e.target.isContentEditable);
+      const setupOpen = !document.getElementById('setupModal').classList.contains('hidden');
+      if (isTyping || setupOpen) return;
+
       if (e.key === 'ArrowRight' || e.key === ' ') {
         e.preventDefault();
         forceNextStep();
