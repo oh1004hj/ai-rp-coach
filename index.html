@@ -242,7 +242,7 @@
     let lastFinalIndex = -1;        // 마지막으로 확정된 문장 번호
     let nextStageBoundary = null;   // 자동 넘김 시 다음 페이지가 시작될 문장 번호
     let lastResultEvent = null;     // 전환 중 들어온 음성 결과를 다시 읽기 위해 보관
-    const MIN_STAGE_TIME_MS = 2000;
+    const MIN_STAGE_TIME_MS = 1000;
 
     const normalizeSpeech = text => String(text || '')
       .toLowerCase().replace(/[^가-힣0-9a-z]/g, '');
